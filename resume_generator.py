@@ -10,6 +10,7 @@ import os
 import logging
 from pathlib import Path
 import webvtt
+import PyPDF2
 
 def configure_logging():
     """
@@ -175,6 +176,55 @@ def extract_text_from_vtt(vtt_file_path):
         raise ValueError(f"Il file VTT '{vtt_file_path}' è malformato: {str(e)}")
     except Exception as e:
         raise Exception(f"Errore durante l'estrazione del testo dal file VTT '{vtt_file_path}': {str(e)}")
+
+def extract_text_from_pdf(pdf_file_path):
+    """
+    Estrae il testo da un file PDF.
+    
+    Utilizza la libreria PyPDF2 per estrarre il testo da tutte le pagine del documento PDF.
+    
+    Args:
+        pdf_file_path (str o Path): Percorso del file PDF da processare.
+            
+    Returns:
+        str: Il testo estratto dal file PDF.
+        
+    Raises:
+        ValueError: Se il file non esiste o non è un file PDF valido.
+        Exception: Per altri errori durante l'elaborazione del file PDF.
+    """
+    pdf_path = Path(pdf_file_path)
+    
+    if not pdf_path.exists() or not pdf_path.is_file():
+        raise ValueError(f"Il file PDF '{pdf_file_path}' non esiste o non è un file.")
+    
+    if pdf_path.suffix.lower() != '.pdf':
+        raise ValueError(f"Il file '{pdf_file_path}' non è un file PDF (estensione attesa: .pdf).")
+    
+    try:
+        logging.debug(f"Estrazione del testo dal file PDF: {pdf_path}")
+        
+        # Apri il file PDF
+        with open(pdf_path, 'rb') as pdf_file:
+            # Crea un lettore PDF
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            
+            # Estrai il testo da tutte le pagine
+            all_text = []
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+                all_text.append(page.extract_text())
+            
+            # Unisci il testo di tutte le pagine con interruzioni di riga
+            extracted_text = "\n\n".join(all_text)
+            
+            logging.debug(f"Testo estratto dal PDF ({len(extracted_text)} caratteri).")
+            return extracted_text
+        
+    except PyPDF2.errors.PdfReadError as e:
+        raise ValueError(f"Errore durante la lettura del file PDF '{pdf_file_path}': {str(e)}")
+    except Exception as e:
+        raise Exception(f"Errore durante l'estrazione del testo dal file PDF '{pdf_file_path}': {str(e)}")
 
 def main():
     """Funzione principale per orchestrare il processo di generazione dei riassunti."""

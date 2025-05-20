@@ -275,7 +275,74 @@ Questa funzione è cruciale per l'estrazione del contenuto testuale dalle trascr
 
 Il codice include anche robusti controlli di validità e gestione degli errori, assicurando che la funzione fallisca in modo prevedibile e informativo in caso di problemi con i file di input. Questo è particolarmente importante in un'applicazione che potrebbe processare un gran numero di file, in quanto permette di identificare e gestire rapidamente eventuali problemi.
 
-### 6. Gestore delle Chiavi API (APIKeyManager)
+### 6. Estrazione del Testo dai File PDF
+
+La funzione `extract_text_from_pdf` è responsabile dell'estrazione del testo dai file PDF:
+
+```python
+def extract_text_from_pdf(pdf_file_path):
+    """
+    Estrae il testo da un file PDF.
+    
+    Utilizza la libreria PyPDF2 per estrarre il testo da tutte le pagine del documento PDF.
+    
+    Args:
+        pdf_file_path (str o Path): Percorso del file PDF da processare.
+            
+    Returns:
+        str: Il testo estratto dal file PDF.
+        
+    Raises:
+        ValueError: Se il file non esiste o non è un file PDF valido.
+        Exception: Per altri errori durante l'elaborazione del file PDF.
+    """
+    pdf_path = Path(pdf_file_path)
+    
+    if not pdf_path.exists() or not pdf_path.is_file():
+        raise ValueError(f"Il file PDF '{pdf_file_path}' non esiste o non è un file.")
+    
+    if pdf_path.suffix.lower() != '.pdf':
+        raise ValueError(f"Il file '{pdf_file_path}' non è un file PDF (estensione attesa: .pdf).")
+    
+    try:
+        logging.debug(f"Estrazione del testo dal file PDF: {pdf_path}")
+        
+        # Apri il file PDF
+        with open(pdf_path, 'rb') as pdf_file:
+            # Crea un lettore PDF
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            
+            # Estrai il testo da tutte le pagine
+            all_text = []
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+                all_text.append(page.extract_text())
+            
+            # Unisci il testo di tutte le pagine con interruzioni di riga
+            extracted_text = "\n\n".join(all_text)
+            
+            logging.debug(f"Testo estratto dal PDF ({len(extracted_text)} caratteri).")
+            return extracted_text
+        
+    except PyPDF2.errors.PdfReadError as e:
+        raise ValueError(f"Errore durante la lettura del file PDF '{pdf_file_path}': {str(e)}")
+    except Exception as e:
+        raise Exception(f"Errore durante l'estrazione del testo dal file PDF '{pdf_file_path}': {str(e)}")
+```
+
+Questa funzione:
+1. Verifica che il file PDF esista e sia effettivamente un file con estensione `.pdf`.
+2. Utilizza la libreria `PyPDF2` per aprire e leggere il file PDF.
+3. Estrae il testo da ciascuna pagina del documento usando il metodo `extract_text()`.
+4. Unisce il testo di tutte le pagine in una singola stringa, separando le pagine con doppi ritorni a capo per mantenere la struttura del documento.
+5. Gestisce robustamente potenziali errori, come file malformati o problemi durante l'estrazione.
+6. Restituisce il testo estratto come una singola stringa.
+
+Questa funzione è essenziale per estrarre contenuto testuale dai materiali di supporto PDF che accompagnano le lezioni video. I PDF possono contenere informazioni aggiuntive, schemi, approfondimenti, e altri contenuti che arricchiscono il corso e che dovrebbero essere inclusi nei riassunti generati.
+
+Il codice include robusti controlli di validità e gestione degli errori, assicurando che la funzione fallisca in modo prevedibile e informativo in caso di problemi con i file di input. L'approccio di estrazione pagina per pagina permette di mantenere l'organizzazione logica del contenuto, separando appropriatamente il testo di ciascuna pagina.
+
+### 7. Gestore delle Chiavi API (APIKeyManager)
 
 Responsabile della gestione sicura delle chiavi API, incluso il caricamento da file .env o variabili d'ambiente, l'hashing per il logging sicuro.
 
@@ -289,7 +356,7 @@ class APIKeyManager:
         # ...
 ```
 
-### 7. Generatore di Riassunti (SimpleResumeGenerator)
+### 8. Generatore di Riassunti (SimpleResumeGenerator)
 
 Classe principale responsabile dell'orchestrazione dell'intero processo:
 
@@ -322,7 +389,7 @@ class SimpleResumeGenerator:
 5. **Generatore di Output**:
    - `create_index(chapters)`: Crea un file indice con collegamenti a tutti i capitoli riassunti
 
-### 8. Sistema di Processing del Testo con LangChain (Estensione Prevista)
+### 9. Sistema di Processing del Testo con LangChain (Estensione Prevista)
 
 Per gestire meglio il contesto e i token con documenti lunghi, è prevista l'integrazione di LangChain con:
 

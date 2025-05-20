@@ -83,3 +83,19 @@
   3. La funzione gestisce correttamente i casi in cui il file non esiste o non è un file VTT valido.
   4. La funzione registra messaggi di log appropriati durante l'estrazione.
 - **Note**: La funzione gestisce robustamente i file VTT malformati, restituendo messaggi di errore chiari in caso di problemi durante il parsing. Inoltre, unisce il testo di tutti i sottotitoli con interruzioni di linea per preservare la struttura del discorso. 
+
+### Step 7: Estrazione del Testo dai File PDF (Base)
+- **Stato**: Completato
+- **Data**: 20 Maggio 2025
+- **Descrizione**: Implementata la funzione `extract_text_from_pdf()` in `resume_generator.py`, che:
+  - Prende il percorso di un file PDF come input.
+  - Verifica che il file esista e sia effettivamente un file PDF.
+  - Utilizza la libreria `PyPDF2` per analizzare il file PDF.
+  - Estrae il testo da tutte le pagine del documento.
+  - Unisce il testo di tutte le pagine in una singola stringa con opportune separazioni.
+  - Restituisce il testo estratto dal file PDF.
+- **Test**: Creato lo script di test `test_pdf_extraction.py` che verifica:
+  1. La funzione estrae correttamente il testo da un file PDF valido.
+  2. La funzione gestisce correttamente i casi in cui il file non esiste.
+  3. La funzione gestisce correttamente i casi in cui il file non è un file PDF.
+- **Note**: La funzione gestisce robustamente i file PDF malformati, restituendo messaggi di errore chiari in caso di problemi durante la lettura. L'implementazione utilizza PyPDF2.PdfReader per estrarre il testo pagina per pagina e poi unisce il contenuto con separazioni adeguate per mantenere la struttura del documento. 
