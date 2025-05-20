@@ -1,170 +1,111 @@
 # Generatore di Riassunti per Corsi Udemy
 
-Questo script Python permette di generare riassunti in formato Markdown dei corsi Udemy scaricati. Lo script estrae i testi dalle trascrizioni (file VTT), genera riassunti e crea file Markdown strutturati con i contenuti del corso.
+Questo script Python permette di generare riassunti in formato Markdown dei corsi Udemy scaricati. Lo script estrae i testi dalle trascrizioni (file VTT) e dai PDF, li divide in parti più piccole se necessario, e può generare riassunti di queste parti utilizzando l'API di OpenAI.
 
 ## Caratteristiche
 
-- Estrazione automatica dei testi dalle trascrizioni VTT
-- Generazione di riassunti tramite API OpenAI (opzionale)
-- Gestione intelligente di testi lunghi con chunking automatico
-- Gestione sicura delle chiavi API con supporto per rotazione e hashing
-- Creazione di file Markdown per ogni capitolo del corso
-- Inclusione di riferimenti ai file PDF presenti nel corso
-- Generazione di un indice con collegamenti a tutti i capitoli
+- Estrazione automatica dei testi dalle trascrizioni VTT e da file PDF.
+- Funzionalità di base per la generazione di riassunti tramite API OpenAI (richiede configurazione API).
+- Gestione di testi lunghi tramite divisione in chunk (la strategia di riassunto combinato dei chunk è in sviluppo).
+- Gestione sicura delle chiavi API OpenAI tramite file `.env` o variabili d'ambiente.
+- Creazione di file Markdown (funzionalità di output dettagliata in sviluppo).
 
 ## Requisiti
 
 - Python 3.6+
-- Librerie: requests, python-dotenv, pathlib
+- Librerie: `python-dotenv`, `pathlib`, `PyPDF2`, `webvtt-py`, `langchain_text_splitters` (parte di `langchain`), `openai`
 
 ## Installazione
 
 ```bash
 # Clona questo repository
-git clone https://github.com/tuousername/udemy-course-resumeeer.git
-cd udemy-course-resumeeer
+# git clone https://github.com/tuousername/udemy-course-resumeeer.git
+# cd udemy-course-resumeeer
 
 # Installa le dipendenze
-pip install requests python-dotenv
+pip install -r requirements.txt
 ```
 
-## Configurazione API
+## Configurazione API OpenAI
 
-Esistono tre modi per configurare la chiave API di OpenAI:
+Per utilizzare la funzionalità di riassunto tramite Intelligenza Artificiale, è **necessario** configurare una chiave API di OpenAI. Il progetto utilizza la classe `APIKeyManager` per gestire le chiavi API. Esistono due modi per configurare la chiave:
 
-1. **File .env** (consigliato):
-   ```bash
-   # Crea un file .env di esempio
-   python resume_generator.py --create_env
-   
-   # Modifica il file .env creato con la tua chiave API
-   nano .env
+1. **File .env** (consigliato per sviluppo locale):
+   Crea un file `.env` nella directory principale del progetto con il seguente contenuto:
    ```
+   OPENAI_API_KEY=la_tua_chiave_api_openai
+   ```
+   Puoi copiare l'esempio da `docs/env_example.txt` (se disponibile) e modificarlo.
 
 2. **Variabile d'ambiente**:
+   Imposta una variabile d'ambiente denominata `OPENAI_API_KEY` con la tua chiave API.
    ```bash
-   export OPENAI_API_KEY="your-openai-api-key"
+   export OPENAI_API_KEY="la_tua_chiave_api_openai"
    ```
-
-3. **Parametro da riga di comando**:
-   ```bash
-   python resume_generator.py --api_key "your-openai-api-key"
-   ```
+Se la chiave API non viene trovata o non è valida, la funzionalità di riassunto AI non sarà disponibile e lo script potrebbe terminare con un errore durante il tentativo di usarla.
 
 ## Utilizzo
 
-### Uso base
+Per eseguire lo script, specifica la directory del corso e, opzionalmente, una directory di output.
 
 ```bash
-python resume_generator.py
+python resume_generator.py "/percorso/alla/tua/directory/del/corso" -o "/percorso/alla/directory/di/output"
 ```
 
-### Opzioni disponibili
+Se la directory di output non è specificata, verrà creata una cartella `resume_[nome_corso]` nella directory corrente.
 
-```bash
-python resume_generator.py \
-  --course_dir "/path/to/your/udemy/course" \
-  --output_dir "resume_output" \
-  --use_ai \
-  --api_key "your-openai-api-key"
-```
+### Argomenti
 
-### Parametri avanzati
+- `course_dir`: (Obbligatorio) Percorso della directory contenente il materiale del corso da processare.
+- `--output_dir` o `-o`: (Opzionale) Percorso della directory dove verranno salvati i riassunti generati.
 
-```bash
-python resume_generator.py \
-  --model "gpt-4" \
-  --max_tokens 800 \
-  --chunk_size 15000 \
-  --rotate_key \
-  --new_key "your-new-openai-api-key"
-```
+## Funzionalità Attuali e Future
 
-### Parametri
+### Estrazione e Chunking del Testo
+- Lo script può estrarre testo da file `.vtt` e `.pdf`.
+- I testi lunghi vengono divisi in "chunk" più piccoli utilizzando `RecursiveCharacterTextSplitter` di Langchain per poter essere processati da modelli linguistici.
 
-- `--course_dir`: Directory contenente il corso Udemy scaricato
-- `--output_dir`: Directory di output per i file Markdown generati
-- `--use_ai`: Usa l'API OpenAI per generare riassunti intelligenti (default: True)
-- `--api_key`: Chiave API di OpenAI per la generazione dei riassunti
-- `--create_env`: Crea un file .env di esempio (non esegue il programma)
-- `--model`: Modello di OpenAI da utilizzare (default: gpt-3.5-turbo)
-- `--max_tokens`: Numero massimo di token per i riassunti (default: 500)
-- `--chunk_size`: Dimensione in caratteri dei chunk per testi lunghi (default: 10000)
-- `--rotate_key`: Ruota la chiave API (richiede una nuova chiave)
-- `--new_key`: Nuova chiave API per la rotazione
+### Riassunto con OpenAI
+- È implementata una funzione (`summarize_with_openai`) che può prendere un singolo chunk di testo e inviarlo all'API di OpenAI (modello `gpt-3.5-turbo`) per generare un riassunto dettagliato.
+- **Importante**: L'orchestrazione completa del riassunto di interi corsi, capitoli o lezioni (che potrebbero richiedere il riassunto di multipli chunk e la combinazione di questi riassunti) è parte degli sviluppi futuri (come descritto nello Step 11 e successivi del piano di implementazione).
 
-## Gestione di testi lunghi
-
-Lo script utilizza una strategia di chunking avanzata per gestire testi lunghi che supererebbero il limite di contesto dei modelli AI:
-
-1. Divide il testo in chunk di dimensione appropriata (configurabile)
-2. Riassume ogni chunk separatamente
-3. Combina i riassunti dei chunk
-4. Se necessario, esegue un riassunto finale dei riassunti combinati
-
-Questa strategia permette di elaborare trascrizioni di qualsiasi lunghezza senza incorrere in errori di "context length exceeded".
+### Output
+- La struttura finale dell'output in Markdown, con file per capitoli, lezioni e un indice generale, è pianificata ma non ancora completamente implementata nel flusso principale.
 
 ## Sicurezza delle chiavi API
 
-Questo script implementa diverse misure di sicurezza per la gestione delle chiavi API:
+Il modulo `api_key_manager.py` gestisce le chiavi API:
+- Caricamento da file `.env` o variabili d'ambiente.
+- Logging di un hash della chiave (non la chiave stessa) per verifica, se il logging è impostato a livelli di debug.
+- Messaggi di errore chiari se la chiave non è configurata.
 
-1. **Hashing delle chiavi nei log**: Le chiavi non vengono mai mostrate in chiaro nei log
-2. **Rotazione delle chiavi**: Possibilità di aggiornare facilmente le chiavi API
-3. **Gestione delle chiavi temporanee**: Supporto per chiavi usa-e-getta per ambienti di test
-4. **Caricamento sicuro dal file .env**: Le chiavi vengono caricate in modo sicuro
+## Gestione degli Errori
 
-## Struttura del file .env
+- Lo script include logging per tracciare il processo e gli errori.
+- Le chiamate all'API OpenAI includono una gestione di base degli errori (es. `APIConnectionError`, `RateLimitError`, `AuthenticationError`). In caso di errore API, solitamente viene sollevata un'eccezione che interrompe il processo per quel task specifico.
+- Non sono attualmente implementati meccanismi di *retry* automatico per le chiamate API fallite o *fallback* a metodi di riassunto alternativi nel flusso principale.
 
-Il file .env è un file di configurazione che permette di memorizzare la chiave API in modo sicuro:
+## Esempio di output (Previsto)
 
-```
-# Inserisci qui la tua chiave API di OpenAI
-OPENAI_API_KEY=your-api-key-here
-```
-
-## Struttura dei file generati
-
-- `indice.md`: File di indice con collegamenti a tutti i capitoli
-- `capitolo_XX.md`: File Markdown per ogni capitolo del corso, contenente:
-  - Riassunto del capitolo
-  - Trascrizioni complete delle lezioni
-  - Link ai file PDF inclusi nel capitolo
-
-## Note sull'API OpenAI
-
-Per utilizzare la funzionalità di riassunto AI, è necessaria una chiave API di OpenAI. È possibile specificarla in tre modi:
-
-1. Nel file .env (metodo consigliato per sviluppo locale)
-2. Come argomento da riga di comando: `--api_key "your-api-key"`
-3. Come variabile d'ambiente: `export OPENAI_API_KEY="your-api-key"`
-
-Se non viene fornita una chiave API, lo script utilizzerà un metodo di riassunto semplice basato sul troncamento del testo.
-
-## Gestione degli errori
-
-Lo script include diversi meccanismi per gestire gli errori comuni:
-
-- **Riprovare in caso di rate limiting**: Attende automaticamente e riprova se l'API è sovraccarica
-- **Fallback al riassunto semplice**: Se l'API non è disponibile, utilizza un metodo di riassunto basato sul troncamento
-- **Troncamento intelligente**: Tronca i testi in modo da mantenere il contesto se necessario
-
-## Esempio di output
+La struttura di output finale prevista (ma ancora in sviluppo attivo) includerà:
 
 ```markdown
-# Capitolo 1: Introduzione al corso
+# Indice del Corso: [Nome Corso]
 
-## Riassunto del capitolo
+- [Capitolo 1: Introduzione](#capitolo-1-introduzione)
+- [Capitolo 2: Concetti Avanzati](#capitolo-2-concetti-avanzati)
 
-Questo capitolo introduce i concetti base del web marketing...
+## Capitolo 1: Introduzione
 
-## Contenuto delle lezioni
+### Riassunto del Capitolo
+Questo capitolo introduce i concetti base...
 
-### Lezione 001: Introduzione al corso
+### Lezione 1.1: Benvenuto
+**Riassunto:** ...
+**Testo Originale Chunk 1:** ...
 
-**Riassunto:** Il docente Fabio presenta il corso di web marketing...
-
-**Trascrizione completa:**
-Ciao sono Fabio e ti voglio dare un caloroso benvenuto all'interno del mio corso di web marketing...
+### Lezione 1.2: Panoramica
+**Riassunto:** ...
 ```
 
 ## Licenza

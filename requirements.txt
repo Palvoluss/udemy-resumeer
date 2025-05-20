@@ -1,0 +1,18 @@
+# Dipendenze di base
+langchain>=0.0.267
+langchain-text-splitters>=0.0.1
+openai>=0.27.0
+python-dotenv>=0.21.0
+requests>=2.28.0
+pathlib>=1.0.1
+PyPDF2>=3.0.0
+webvtt-py>=0.4.6
+
+# Dipendenze per il text processing
+nltk>=3.8.0
+
+# Dipendenze per vector store (per fasi future)
+faiss-cpu>=1.7.4
+
+# Dipendenze per test
+pytest>=7.0.0 

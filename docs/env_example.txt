@@ -1,0 +1,5 @@
+# Configurazione delle chiavi API
+# Copia questo file come .env nella directory principale e imposta i valori appropriati
+
+# Chiave API di OpenAI - Obbligatoria per le funzionalità di riassunto
+OPENAI_API_KEY=your_openai_api_key_here 

@@ -38,3 +38,5 @@ test_data/
 # Specifici del sistema operativo
 .DS_Store
 Thumbs.db 
+
+.courses/
