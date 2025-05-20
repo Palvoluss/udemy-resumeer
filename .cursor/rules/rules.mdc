@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# IMPORTANT:
+# Always read memory-bank/@architecture.md before writing any code. Include entire database schema.
+# Always read memory-bank/@product-requirements.md before writing any code.
+# After adding a major feature or completing a milestone, update memory-bank/@architecture.md
+# Always prefer modularity (multiple files) and discourage a monolith (one giant file) 
+# prefer to use clean code architecture and code human readability

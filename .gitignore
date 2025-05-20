@@ -1,0 +1,40 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments e configurazione
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# Directory di output dei riassunti
+resume_*/
+output/
+
+# IDE e editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# File specifici dell'applicazione
+*.log
+*.vtt
+test_data/
+
+# Specifici del sistema operativo
+.DS_Store
+Thumbs.db 
