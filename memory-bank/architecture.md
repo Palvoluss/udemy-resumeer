@@ -17,6 +17,7 @@ udemy-course-resumeeer/
 │   └── product-requirements.md # Requisiti del prodotto
 ├── .env                       # File di configurazione per le chiavi API (non sotto controllo versione)
 ├── progress.md                # Documentazione del progresso dell'implementazione
+├── test_vtt_extraction.py     # Script di test per la funzione di estrazione dai file VTT
 └── output/                    # Directory per l'output generato (riassunti in markdown)
 ```
 
@@ -214,7 +215,67 @@ Questa funzione:
 
 Questa funzione è essenziale per identificare le lezioni all'interno di ciascun capitolo, dato che i file VTT contengono le trascrizioni delle lezioni che dovranno essere processate. L'ordinamento alfabetico garantisce che le lezioni vengano elaborate in un ordine prevedibile.
 
-### 5. Gestore delle Chiavi API (APIKeyManager)
+### 5. Estrazione del Testo dai File VTT
+
+La funzione `extract_text_from_vtt` è responsabile dell'estrazione del testo dai file di trascrizione WebVTT:
+
+```python
+def extract_text_from_vtt(vtt_file_path):
+    """
+    Estrae il testo parlato da un file VTT.
+    
+    Utilizza la libreria webvtt-py per analizzare il file VTT ed estrarre solo il contenuto
+    testuale (escludendo timestamp, impostazioni dei sottotitoli e l'intestazione WEBVTT).
+    
+    Args:
+        vtt_file_path (str o Path): Percorso del file VTT da processare.
+            
+    Returns:
+        str: Il testo estratto dal file VTT, con sottotitoli separati da spazi o nuove linee.
+        
+    Raises:
+        ValueError: Se il file non esiste o non è un file VTT valido.
+        Exception: Per altri errori durante il parsing del file VTT.
+    """
+    vtt_path = Path(vtt_file_path)
+    
+    if not vtt_path.exists() or not vtt_path.is_file():
+        raise ValueError(f"Il file VTT '{vtt_file_path}' non esiste o non è un file.")
+    
+    if vtt_path.suffix.lower() != '.vtt':
+        raise ValueError(f"Il file '{vtt_file_path}' non è un file VTT (estensione attesa: .vtt).")
+    
+    try:
+        logging.debug(f"Estrazione del testo dal file VTT: {vtt_path}")
+        
+        # Parse del file VTT utilizzando webvtt-py
+        vtt_content = webvtt.read(str(vtt_path))
+        
+        # Estrai solo il testo dai sottotitoli, unendolo in una singola stringa
+        extracted_text = "\n".join(caption.text for caption in vtt_content)
+        
+        logging.debug(f"Testo estratto ({len(extracted_text)} caratteri).")
+        return extracted_text
+        
+    except webvtt.errors.MalformedFileError as e:
+        raise ValueError(f"Il file VTT '{vtt_file_path}' è malformato: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Errore durante l'estrazione del testo dal file VTT '{vtt_file_path}': {str(e)}")
+```
+
+Questa funzione:
+1. Verifica che il file VTT esista e sia effettivamente un file con estensione `.vtt`.
+2. Utilizza la libreria `webvtt-py` per analizzare il file VTT.
+3. Estrae solo il contenuto testuale, escludendo timestamp, impostazioni dei sottotitoli e l'intestazione WEBVTT.
+4. Unisce il testo di tutti i sottotitoli in una singola stringa, separando i diversi sottotitoli con interruzioni di linea.
+5. Gestisce robustamente potenziali errori, come file malformati o problemi durante il parsing.
+6. Restituisce il testo estratto come una singola stringa.
+
+Questa funzione è cruciale per l'estrazione del contenuto testuale dalle trascrizioni delle lezioni, che è il primo passo per la generazione dei riassunti. La funzione si occupa di eliminare tutti i metadati non necessari (timestamp, formattazione, ecc.) e di mantenere solo il testo effettivamente parlato, che è l'informazione rilevante per il riassunto.
+
+Il codice include anche robusti controlli di validità e gestione degli errori, assicurando che la funzione fallisca in modo prevedibile e informativo in caso di problemi con i file di input. Questo è particolarmente importante in un'applicazione che potrebbe processare un gran numero di file, in quanto permette di identificare e gestire rapidamente eventuali problemi.
+
+### 6. Gestore delle Chiavi API (APIKeyManager)
 
 Responsabile della gestione sicura delle chiavi API, incluso il caricamento da file .env o variabili d'ambiente, l'hashing per il logging sicuro.
 
@@ -228,7 +289,7 @@ class APIKeyManager:
         # ...
 ```
 
-### 6. Generatore di Riassunti (SimpleResumeGenerator)
+### 7. Generatore di Riassunti (SimpleResumeGenerator)
 
 Classe principale responsabile dell'orchestrazione dell'intero processo:
 
@@ -261,7 +322,7 @@ class SimpleResumeGenerator:
 5. **Generatore di Output**:
    - `create_index(chapters)`: Crea un file indice con collegamenti a tutti i capitoli riassunti
 
-### 7. Sistema di Processing del Testo con LangChain (Estensione Prevista)
+### 8. Sistema di Processing del Testo con LangChain (Estensione Prevista)
 
 Per gestire meglio il contesto e i token con documenti lunghi, è prevista l'integrazione di LangChain con:
 
@@ -321,10 +382,23 @@ Lo script principale che orchestrerà l'intero processo di generazione dei riass
    - La funzione `list_chapter_directories` identifica le sottodirectory dirette come capitoli.
    - La funzione `list_vtt_files` identifica i file VTT all'interno di un capitolo.
 
-4. **Funzione Main**: Orchestrazione iniziale del processo, con gestione degli errori di base.
+4. **Estrazione del Testo**:
+   - La funzione `extract_text_from_vtt` estrae il testo dai file VTT utilizzando la libreria `webvtt-py`.
+   - Rimuove timestamp, metadati e intestazioni, preservando solo il contenuto testuale parlato.
+
+5. **Funzione Main**: Orchestrazione iniziale del processo, con gestione degli errori di base.
+
+#### `test_vtt_extraction.py`
+Script di test dedicato alla verifica della funzionalità di estrazione del testo dai file VTT. Include:
+
+1. **Test di Estrazione di Base**: Verifica che la funzione estragga correttamente il testo da un file VTT valido, rimuovendo timestamp e metadati.
+
+2. **Test di Gestione degli Errori**: Verifica che la funzione gestisca correttamente casi come file inesistenti o file con estensione non VTT.
+
+3. **Logging dei Risultati dei Test**: Utilizza il modulo `logging` per fornire output dettagliato sui test eseguiti.
 
 Nelle prossime fasi, lo script sarà esteso per includere:
-- Estrazione del testo da file VTT e PDF
+- Estrazione del testo da file PDF
 - Chunking del testo per gestire documenti lunghi
 - Integrazione con l'API di OpenAI per la generazione di riassunti
 - Generazione di output in formato Markdown

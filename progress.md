@@ -66,3 +66,20 @@
   3. Il logging mostra il numero di file VTT trovati.
   4. La funzione gestisce correttamente i casi in cui la directory non esiste o non è una directory.
 - **Note**: La funzione utilizza un controllo case-insensitive per l'estensione dei file (`.vtt`) per assicurare che tutti i file vengano rilevati indipendentemente dalla capitalizzazione dell'estensione. 
+
+### Step 6: Estrazione del Testo dai File VTT
+- **Stato**: Completato
+- **Data**: 24 Maggio 2023
+- **Descrizione**: Implementata la funzione `extract_text_from_vtt()` in `resume_generator.py`, che:
+  - Prende il percorso di un file VTT come input.
+  - Verifica che il file esista e sia un file VTT valido.
+  - Utilizza la libreria `webvtt-py` per analizzare il file VTT.
+  - Estrae solo il contenuto testuale, escludendo timestamp, impostazioni dei sottotitoli e l'intestazione WEBVTT.
+  - Unisce il testo di tutti i sottotitoli in una singola stringa.
+  - Restituisce il testo estratto dal file VTT.
+- **Test**: Verificato che:
+  1. La funzione estrae correttamente il testo dai file VTT di esempio.
+  2. I timestamp e i metadati vengono rimossi dal testo estratto.
+  3. La funzione gestisce correttamente i casi in cui il file non esiste o non è un file VTT valido.
+  4. La funzione registra messaggi di log appropriati durante l'estrazione.
+- **Note**: La funzione gestisce robustamente i file VTT malformati, restituendo messaggi di errore chiari in caso di problemi durante il parsing. Inoltre, unisce il testo di tutti i sottotitoli con interruzioni di linea per preservare la struttura del discorso. 

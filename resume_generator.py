@@ -9,6 +9,7 @@ import argparse
 import os
 import logging
 from pathlib import Path
+import webvtt
 
 def configure_logging():
     """
@@ -132,6 +133,48 @@ def list_vtt_files(chapter_dir):
     logging.info(f"Trovati {len(vtt_files)} file VTT nel capitolo '{chapter_path.name}'.")
     
     return vtt_files
+
+def extract_text_from_vtt(vtt_file_path):
+    """
+    Estrae il testo parlato da un file VTT.
+    
+    Utilizza la libreria webvtt-py per analizzare il file VTT ed estrarre solo il contenuto
+    testuale (escludendo timestamp, impostazioni dei sottotitoli e l'intestazione WEBVTT).
+    
+    Args:
+        vtt_file_path (str o Path): Percorso del file VTT da processare.
+            
+    Returns:
+        str: Il testo estratto dal file VTT, con sottotitoli separati da spazi o nuove linee.
+        
+    Raises:
+        ValueError: Se il file non esiste o non è un file VTT valido.
+        Exception: Per altri errori durante il parsing del file VTT.
+    """
+    vtt_path = Path(vtt_file_path)
+    
+    if not vtt_path.exists() or not vtt_path.is_file():
+        raise ValueError(f"Il file VTT '{vtt_file_path}' non esiste o non è un file.")
+    
+    if vtt_path.suffix.lower() != '.vtt':
+        raise ValueError(f"Il file '{vtt_file_path}' non è un file VTT (estensione attesa: .vtt).")
+    
+    try:
+        logging.debug(f"Estrazione del testo dal file VTT: {vtt_path}")
+        
+        # Parse del file VTT utilizzando webvtt-py
+        vtt_content = webvtt.read(str(vtt_path))
+        
+        # Estrai solo il testo dai sottotitoli, unendolo in una singola stringa
+        extracted_text = "\n".join(caption.text for caption in vtt_content)
+        
+        logging.debug(f"Testo estratto ({len(extracted_text)} caratteri).")
+        return extracted_text
+        
+    except webvtt.errors.MalformedFileError as e:
+        raise ValueError(f"Il file VTT '{vtt_file_path}' è malformato: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Errore durante l'estrazione del testo dal file VTT '{vtt_file_path}': {str(e)}")
 
 def main():
     """Funzione principale per orchestrare il processo di generazione dei riassunti."""
