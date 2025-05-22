@@ -19,6 +19,7 @@ from api_key_manager import APIKeyManager # IMPORT AGGIUNTO
 import openai # type: ignore
 import re # Necessario per find_related_pdf
 from dotenv import load_dotenv # IMPORT AGGIUNTO
+from .markdown_formatter import MarkdownFormatter # NUOVO IMPORT
 
 # Configurazione del logger
 logger = logging.getLogger(__name__)
@@ -458,46 +459,30 @@ def summarize_long_text(text: str, api_key: str, max_chunk_size: int = 3800, ove
     logger.info("Meta-riassunto completato.")
     return final_summary
 
-def write_lesson_summary(lesson_title: str, summary_text: str, output_file_path: Path) -> None: # Ripristinato None
+def write_lesson_summary(formatter: MarkdownFormatter, lesson_title: str, summary_text: str, output_file_path: Path) -> None: # Modificata firma
     """
-    Scrive il riassunto di una lezione in un file Markdown.
-    # Ripristino docstring e logica interna se alterata
-    Il file creato (o sovrascritto) avrà il seguente contenuto:
-    ## [lesson_title]
-
-    [summary_text]
-
-    Args:
-        lesson_title (str): Il titolo della lezione, sanitizzato per l'uso come nome file se necessario.
-        summary_text (str): Il testo del riassunto della lezione.
-        output_file_path (Path): Il percorso completo del file Markdown di output.
-                                 La directory genitore verrà creata se non esiste.
-                                 
-    Raises:
-        IOError: Se si verifica un errore durante la scrittura del file.
-        Exception: Per altri errori imprevisti.
+    Scrive il riassunto di una lezione in un file Markdown, usando MarkdownFormatter.
+    # ... (docstring unchanged) ...
     """
-    logger.debug(f"Tentativo di scrivere il riassunto della lezione '{lesson_title}' su '{output_file_path}'.")
+    logger.info(f"Scrittura del riassunto della lezione '{lesson_title}' in: {output_file_path}")
+    # Assicura che la directory genitore esista
+    output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        output_file_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Assicurata la directory genitore: {output_file_path.parent}")
-
-        cleaned_lesson_title = lesson_title.replace("[", "").replace("]", "")
-
-        markdown_content = f"## {cleaned_lesson_title}\n\n{summary_text.strip()}\n"
+        content = []
+        content.append(formatter.format_header(lesson_title, level=2))
+        content.append(formatter.new_line())
+        content.append(summary_text) # Il testo del riassunto dovrebbe già essere formattato o essere testo puro
         
         with open(output_file_path, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
-        
-        logger.info(f"Riassunto della lezione '{cleaned_lesson_title}' scritto con successo su '{output_file_path}'.")
-
+            f.write("\\n".join(content))
+        logger.info(f"Riassunto della lezione '{lesson_title}' scritto con successo.")
     except IOError as e:
-        logger.error(f"Errore di I/O durante la scrittura del file '{output_file_path}': {e}")
-        raise
+        logger.error(f"Errore di I/O durante la scrittura del file di riassunto della lezione '{output_file_path}': {e}")
+        # Potrebbe essere utile rilanciare l'eccezione o gestirla in modo più specifico
+        # a seconda dei requisiti di robustezza dell'applicazione. Per ora, loggo e continuo.
     except Exception as e:
-        logger.error(f"Errore imprevisto durante la scrittura del riassunto della lezione su '{output_file_path}': {e}")
-        raise
+        logger.error(f"Errore imprevisto durante la scrittura del riassunto della lezione '{lesson_title}': {e}")
 
 def find_related_pdf(vtt_file_path: Path, chapter_dir: Path) -> List[Path]:
     """
@@ -579,365 +564,304 @@ def find_related_pdf(vtt_file_path: Path, chapter_dir: Path) -> List[Path]:
     
     return [] # Restituisce lista vuota se non trovati o dopo logica di deduplicazione se related_pdfs rimane vuota
 
-def process_lesson(vtt_file: Path, chapter_dir: Path, base_output_dir: Path, api_key: str) -> Optional[Path]:
+def process_lesson(formatter: MarkdownFormatter, vtt_file: Path, chapter_dir: Path, base_output_dir: Path, api_key: str) -> Optional[Path]: # Modificata firma
     """
-    Processa una singola lezione (file VTT) e i suoi PDF correlati.
-
-    Estrae il testo dal VTT e dai PDF, li riassume e scrive i riassunti
-    in un unico file Markdown nella directory di output appropriata.
-
-    Args:
-        vtt_file (Path): Percorso del file VTT della lezione.
-        chapter_dir (Path): Percorso della directory del capitolo che contiene la lezione.
-        base_output_dir (Path): Directory di output principale per tutti i riassunti del corso.
-        api_key (str): Chiave API di OpenAI.
-
-    Returns:
-        Optional[Path]: Il percorso del file Markdown generato se il processo ha successo,
-                        None altrimenti.
+    Processa un singolo file VTT e i PDF correlati per generare un riassunto della lezione.
+    # ... (docstring unchanged) ...
     """
-    logger.info(f"Inizio elaborazione lezione: {vtt_file.name} nel capitolo {chapter_dir.name}")
-    try:
-        # 1. Estrarre testo dal VTT
-        vtt_text = extract_text_from_vtt(vtt_file)
-        if not vtt_text.strip():
-            logger.warning(f"Testo vuoto estratto da VTT: {vtt_file.name}. Salto il riassunto VTT.")
-            vtt_summary = "Nessun contenuto testuale trovato nel file VTT."
-        else:
-            logger.info(f"Testo estratto da VTT: {vtt_file.name} ({len(vtt_text)} caratteri). Inizio riassunto...")
-            vtt_summary = summarize_long_text(vtt_text, api_key)
-            logger.info(f"Riassunto VTT per {vtt_file.name} completato.")
-
-        # 2. Trovare PDF correlati
-        related_pdfs = find_related_pdf(vtt_file, chapter_dir)
-        pdf_summaries_content = []
-
-        if related_pdfs:
-            logger.info(f"Trovati {len(related_pdfs)} PDF correlati per {vtt_file.name}: {[pdf.name for pdf in related_pdfs]}")
-            for pdf_file in related_pdfs:
-                logger.info(f"Elaborazione PDF correlato: {pdf_file.name}")
-                try:
-                    pdf_text = extract_text_from_pdf(pdf_file)
-                    if not pdf_text.strip():
-                        logger.warning(f"Testo vuoto estratto da PDF: {pdf_file.name}. Salto il riassunto PDF.")
-                        pdf_summary = f"Nessun contenuto testuale trovato nel file PDF: {pdf_file.name}."
-                    else:
-                        logger.info(f"Testo estratto da PDF: {pdf_file.name} ({len(pdf_text)} caratteri). Inizio riassunto...")
-                        pdf_summary = summarize_long_text(pdf_text, api_key)
-                        logger.info(f"Riassunto PDF per {pdf_file.name} completato.")
-                    
-                    pdf_summaries_content.append(f"### Riassunto del PDF: {pdf_file.name}\\n\\n{pdf_summary}")
-                except Exception as e_pdf:
-                    logger.error(f"Errore durante l'elaborazione del PDF {pdf_file.name}: {e_pdf}")
-                    pdf_summaries_content.append(f"### Errore nel processare il PDF: {pdf_file.name}\\n\\nSi è verificato un errore: {e_pdf}")
-        else:
-            logger.info(f"Nessun PDF correlato trovato per {vtt_file.name}.")
-
-        # 3. Costruire titolo della lezione
-        lesson_title_base = vtt_file.stem
-        lesson_title_base = re.sub(r"^\\d+[-_.\s]*", "", lesson_title_base)
-        lesson_title = lesson_title_base.replace("_", " ").replace("-", " ").title()
-        logger.info(f"Titolo della lezione derivato: '{lesson_title}' da '{vtt_file.name}'")
-
-        # 4. Costruire il contenuto Markdown finale
-        full_summary_content = f"## Riassunto Trascrizione Lezione: {lesson_title} (da {vtt_file.name})\\n\\n{vtt_summary}\\n"
-        if pdf_summaries_content:
-            full_summary_content += "\\n---\\n\\n" 
-            full_summary_content += "\\n\\n".join(pdf_summaries_content)
-        
-        # 5. Creare struttura di output e scrivere il file
-        chapter_name_for_path = chapter_dir.name
-        lesson_filename_stem = re.sub(r"^\\d+[-_.\s]*", "", vtt_file.stem) 
-        lesson_filename_stem = lesson_filename_stem.replace(" ", "_") 
-        
-        prefix_match = re.match(r"^(\\d+[-_.\s]*)", vtt_file.stem)
-        if prefix_match:
-            prefix = prefix_match.group(1).rstrip('-_.\s') 
-            lesson_filename = f"{prefix}_{lesson_filename_stem}_summary.md"
-        else:
-            lesson_filename = f"{lesson_filename_stem}_summary.md"
-            
-        lesson_filename = "".join(c if c.isalnum() or c in ('.', '_', '-') else '_' for c in lesson_filename)
-
-
-        lesson_output_dir = base_output_dir / chapter_name_for_path
-        output_file_path = lesson_output_dir / lesson_filename
-
-        write_lesson_summary(lesson_title, full_summary_content, output_file_path)
-        logger.info(f"Riassunto completo della lezione '{lesson_title}' scritto in: {output_file_path}")
-        return output_file_path
-
-    except Exception as e:
-        logger.error(f"Errore grave durante l'elaborazione della lezione {vtt_file.name}: {e}")
-        return None
-
-def process_chapter(chapter_dir: Path, base_output_dir: Path, api_key: str) -> List[Optional[Path]]:
-    """
-    Processa tutti i file VTT all'interno di una directory di capitolo.
-
-    Per ogni file VTT, chiama process_lesson per generare il riassunto.
-
-    Args:
-        chapter_dir (Path): Percorso della directory del capitolo.
-        base_output_dir (Path): Directory di output principale per tutti i riassunti del corso.
-        api_key (str): Chiave API di OpenAI.
-
-    Returns:
-        List[Optional[Path]]: Una lista di percorsi ai file Markdown generati per ogni lezione.
-                              Contiene None per le lezioni che hanno fallito l'elaborazione.
-    """
-    logger.info(f"Inizio elaborazione del capitolo: {chapter_dir.name}")
+    lesson_name = vtt_file.stem  # Nome del file senza estensione
+    # Sanitizza il nome della lezione per creare un nome di file valido
+    sanitized_lesson_name = re.sub(r'[\\\\/:*? \"<>|]', '_', lesson_name)
+    lesson_output_filename = f"{sanitized_lesson_name}_summary.md"
     
-    if not chapter_dir.exists() or not chapter_dir.is_dir():
-        logger.error(f"La directory del capitolo '{chapter_dir}' non esiste o non è una directory.")
-        return []
+    # Costruisci il percorso di output per il riassunto della lezione
+    # Mantiene la struttura capitolo/lezione nella directory di output
+    chapter_name_for_path = chapter_dir.name
+    lesson_output_path = base_output_dir / chapter_name_for_path / lesson_output_filename
+    
+    logger.info(f"--- Inizio elaborazione lezione: {lesson_name} ---")
+
+    try:
+        # Estrai il testo dal file VTT
+        vtt_text = extract_text_from_vtt(vtt_file)
+        logger.info(f"Testo estratto da VTT '{vtt_file.name}': {len(vtt_text)} caratteri.")
+
+        # Trova e processa i PDF correlati
+        related_pdfs = find_related_pdf(vtt_file, chapter_dir)
+        pdf_texts: List[str] = []
+        if related_pdfs:
+            logger.info(f"Trovati {len(related_pdfs)} PDF correlati per '{vtt_file.name}'.")
+            for pdf_file in related_pdfs:
+                try:
+                    pdf_text_content = extract_text_from_pdf(pdf_file)
+                    if pdf_text_content:
+                        logger.info(f"Testo estratto da PDF '{pdf_file.name}': {len(pdf_text_content)} caratteri.")
+                        pdf_texts.append(pdf_text_content)
+                    else:
+                        logger.warning(f"Nessun testo estratto o PDF vuoto: {pdf_file.name}")
+                except Exception as e_pdf:
+                    logger.error(f"Errore durante l'estrazione del testo da PDF '{pdf_file.name}': {e_pdf}")
+        else:
+            logger.info(f"Nessun PDF correlato trovato per '{vtt_file.name}'.")
+
+        # Combina il testo VTT e PDF (se presente)
+        combined_text = vtt_text
+        if pdf_texts:
+            combined_text += "\\n\\n--- Contenuto PDF Aggiuntivo ---\\n\\n" + "\\n\\n".join(pdf_texts)
+        
+        if not combined_text.strip():
+            logger.warning(f"Nessun contenuto testuale da riassumere per la lezione '{lesson_name}'. Salto il riassunto.")
+            return None
+
+        # Riassumi il testo combinato
+        logger.info(f"Riassumo il testo combinato per la lezione '{lesson_name}' ({len(combined_text)} caratteri).")
+        # TODO: Considerare se il prompt di default di summarize_long_text è adeguato per le lezioni
+        # o se serve un system_prompt specifico per i riassunti di lezione.
+        summary_text = summarize_long_text(combined_text, api_key)
+        
+        if summary_text:
+            logger.info(f"Riassunto generato per la lezione '{lesson_name}': {len(summary_text)} caratteri.")
+            # Scrivi il riassunto in un file Markdown
+            write_lesson_summary(formatter, lesson_name, summary_text, lesson_output_path) # Passa formatter
+            logger.info(f"Riassunto della lezione '{lesson_name}' scritto in: {lesson_output_path}")
+            return lesson_output_path
+        else:
+            logger.warning(f"Il riassunto per la lezione '{lesson_name}' è vuoto. Nessun file generato.")
+            return None
+
+    except ValueError as ve:
+        logger.error(f"Errore di valore durante l'elaborazione della lezione '{lesson_name}': {ve}")
+    except openai.APIError as api_err: # type: ignore
+        logger.error(f"Errore API OpenAI durante l'elaborazione della lezione '{lesson_name}': {api_err}")
+    except Exception as e:
+        logger.error(f"Errore imprevisto durante l'elaborazione della lezione '{lesson_name}' ({vtt_file.name}): {e}")
+    
+    return None
+
+def process_chapter(formatter: MarkdownFormatter, chapter_dir: Path, base_output_dir: Path, api_key: str) -> List[Optional[Path]]: # Modificata firma
+    """
+    Processa tutti i file VTT in una directory di capitolo.
+    # ... (docstring unchanged) ...
+    """
+    chapter_name = chapter_dir.name
+    logger.info(f"=== Inizio elaborazione capitolo: {chapter_name} ===\")
+    
+    # Crea la sottodirectory per l'output del capitolo, se non esiste
+    chapter_output_dir = base_output_dir / chapter_name
+    try:
+        chapter_output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Directory di output per il capitolo '{chapter_name}' assicurata: {chapter_output_dir}")
+    except OSError as e:
+        logger.error(f"Errore durante la creazione della directory di output per il capitolo '{chapter_name}': {e}")
+        return [] # Ritorna una lista vuota se non si può creare la directory del capitolo
 
     vtt_files = list_vtt_files(chapter_dir)
     if not vtt_files:
-        logger.warning(f"Nessun file VTT trovato nel capitolo '{chapter_dir.name}'. Salto l'elaborazione del capitolo.")
+        logger.warning(f"Nessun file VTT trovato nel capitolo '{chapter_name}'.")
         return []
 
-    processed_lesson_paths: List[Optional[Path]] = []
+    processed_lesson_files: List[Optional[Path]] = []
     for vtt_file in vtt_files:
-        logger.info(f"Avvio elaborazione per il file VTT: {vtt_file.name} nel capitolo {chapter_dir.name}")
-        # Nota: base_output_dir viene passato a process_lesson, che creerà la sottocartella del capitolo
-        # se non esiste già.
-        lesson_summary_path = process_lesson(vtt_file, chapter_dir, base_output_dir, api_key)
-        processed_lesson_paths.append(lesson_summary_path)
+        # Assicurati che process_lesson ritorni un Path o None
+        # e che questo venga aggiunto a processed_lesson_files
+        lesson_summary_path = process_lesson(formatter, vtt_file, chapter_dir, base_output_dir, api_key) # Passa formatter
         if lesson_summary_path:
-            logger.info(f"File VTT {vtt_file.name} elaborato con successo. Riassunto salvato in: {lesson_summary_path}")
+            processed_lesson_files.append(lesson_summary_path)
         else:
-            logger.error(f"Fallita l'elaborazione del file VTT: {vtt_file.name} nel capitolo {chapter_dir.name}")
+            # Anche se una lezione fallisce, potremmo voler continuare con le altre
+            # e registrare None per indicare il fallimento.
+            processed_lesson_files.append(None) 
             
-    logger.info(f"Elaborazione del capitolo '{chapter_dir.name}' completata. {len(processed_lesson_paths)} lezioni elaborate.")
-    return processed_lesson_paths
+    logger.info(f"=== Fine elaborazione capitolo: {chapter_name}. {len(processed_lesson_files)} lezioni processate. ===\")
+    return processed_lesson_files
 
-def create_chapter_summary(chapter_dir: Path, lesson_summary_files: List[Optional[Path]], base_output_dir: Path) -> Optional[Path]:
+def create_chapter_summary(formatter: MarkdownFormatter, chapter_dir: Path, lesson_summary_files: List[Optional[Path]], base_output_dir: Path) -> Optional[Path]: # Modificata firma
     """
-    Crea un file Markdown di riassunto per un capitolo.
-
-    Il file conterrà un titolo per il capitolo e una lista di link
-    ai file di riassunto delle singole lezioni.
-
-    Args:
-        chapter_dir (Path): Percorso della directory del capitolo.
-        lesson_summary_files (List[Optional[Path]]): Lista dei percorsi ai file Markdown
-                                                     dei riassunti delle lezioni.
-                                                     Può contenere None per lezioni non processate.
-        base_output_dir (Path): Directory di output principale per tutti i riassunti del corso.
-
-    Returns:
-        Optional[Path]: Il percorso del file Markdown del riassunto del capitolo generato
-                        o None in caso di errore.
+    Crea un file di riepilogo per il capitolo, usando MarkdownFormatter.
+    # ... (docstring unchanged) ...
     """
-    try:
-        chapter_name = chapter_dir.name
-        chapter_title = chapter_name.replace("_", " ").replace("-", " ")
-        # Tentativo di rendere il titolo più leggibile, es. rimuovendo prefissi numerici
-        chapter_title = re.sub(r"^\d+\s*[-_]*\s*", "", chapter_title).title()
+    chapter_name = chapter_dir.name
+    # Sanitizza il nome del capitolo per creare un nome di file valido
+    sanitized_chapter_name = re.sub(r'[\\\\/:*?\"<>|]', '_', chapter_name)
+    summary_file_name = f"_CHAPTER_SUMMARY_{sanitized_chapter_name}.md"
+    # Il file di riassunto del capitolo va nella directory principale del corso di output,
+    # o nella directory del capitolo stesso? Il piano originale (1.1.5) suggerisce "capitoli (inizialmente con link)".
+    # `progress.md` Step 15 dice "crea un file di riepilogo per il capitolo".
+    # Lo metto nella directory base_output_dir per ora, per coerenza con l'index principale.
+    # Modifica: lo metto all'interno della cartella del capitolo per una migliore organizzazione.
+    chapter_output_dir = base_output_dir / chapter_name
+    summary_file_path = chapter_output_dir / summary_file_name
 
-        chapter_summary_file_name = f"{chapter_name}_summary.md"
-        chapter_summary_output_path = base_output_dir / chapter_summary_file_name
+    logger.info(f"Creazione del riassunto per il capitolo '{chapter_name}' in '{summary_file_path}'")
 
-        logging.info(f"Creazione del file di riassunto per il capitolo '{chapter_title}' in '{chapter_summary_output_path}'")
+    # Assicura che la directory del capitolo esista (dovrebbe essere già stata creata da process_chapter)
+    summary_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(chapter_summary_output_path, "w", encoding="utf-8") as f:
-            f.write(f"# {chapter_title}\\n\\n")
-            f.write("## Lezioni\\n\\n")
+    valid_lesson_files = [f for f in lesson_summary_files if f is not None]
 
-            valid_lesson_files = [Path(file) for file in lesson_summary_files if file is not None]
-
-            if not valid_lesson_files:
-                f.write("Nessuna lezione processata per questo capitolo.\\n")
-            else:
-                for lesson_file_abs_path in valid_lesson_files:
-                    # Crea un percorso relativo dal file di riassunto del capitolo al file della lezione
-                    try:
-                        # Assicurati che entrambi i percorsi siano assoluti prima di calcolare il relativo
-                        if not chapter_summary_output_path.is_absolute():
-                            # Fallback se il percorso di output non è assoluto (improbabile con Path)
-                            chapter_summary_abs_path = Path.cwd() / chapter_summary_output_path
-                        else:
-                            chapter_summary_abs_path = chapter_summary_output_path
-                        
-                        # Il percorso del file della lezione dovrebbe già essere assoluto o relativo corretto
-                        # Se lesson_file_abs_path non è assoluto, rendilo relativo a base_output_dir
-                        if not lesson_file_abs_path.is_absolute():
-                             lesson_file_to_link = lesson_file_abs_path # è già relativo a base_output_dir
-                        else:
-                             # Se è assoluto, rendilo relativo alla directory che contiene il chapter_summary_file
-                             lesson_file_to_link = lesson_file_abs_path.relative_to(chapter_summary_abs_path.parent)
-
-
-                        lesson_title = lesson_file_abs_path.stem.replace("_summary", "").replace("_", " ").replace("-", " ")
-                        lesson_title = re.sub(r"^\d+\s*[-_]*\s*", "", lesson_title).title()
-                        
-                        f.write(f"- [{lesson_title}]({lesson_file_to_link})\\n")
-                    except ValueError as ve:
-                        logging.warning(f"Impossibile creare il link relativo per {lesson_file_abs_path} da {chapter_summary_abs_path.parent}: {ve}")
-                        # Fallback: usa il nome del file se il link relativo non può essere creato
-                        lesson_title = lesson_file_abs_path.stem.replace("_summary", "").replace("_", " ").replace("-", " ").title()
-                        f.write(f"- {lesson_title} (file: {lesson_file_abs_path.name})\\n")
-
-
-            logging.info(f"File di riassunto del capitolo '{chapter_summary_output_path}' creato con successo.")
-            return chapter_summary_output_path
-
-    except IOError as e:
-        logging.error(f"Errore di I/O durante la creazione del riassunto del capitolo per '{chapter_dir.name}': {e}")
+    if not valid_lesson_files:
+        logger.warning(f"Nessun file di riassunto di lezione valido fornito per il capitolo '{chapter_name}'.")
         return None
-    except Exception as e:
-        logging.error(f"Errore imprevisto durante la creazione del riassunto del capitolo per '{chapter_dir.name}': {e}")
-        return None
-
-def create_main_index(course_name: str, chapter_summary_files: List[Optional[Path]], base_output_dir: Path) -> Optional[Path]:
-    """
-    Crea il file README.md principale per il corso.
-
-    Il file README.md conterrà un titolo per il corso e una lista di link
-    ai file di riassunto di ciascun capitolo.
-
-    Args:
-        course_name (str): Il nome del corso.
-        chapter_summary_files (List[Optional[Path]]): Lista dei percorsi ai file Markdown
-                                                     dei riassunti dei capitoli.
-        base_output_dir (Path): Directory di output principale per tutti i riassunti.
-
-    Returns:
-        Optional[Path]: Il percorso del file README.md generato o None in caso di errore.
-    """
-    logging.info(f"Creazione del file README.md principale per il corso '{course_name}'.")
-    readme_file_path = base_output_dir / "README.md"
-    valid_chapter_summaries = [f for f in chapter_summary_files if f is not None]
 
     try:
-        with open(readme_file_path, 'w', encoding='utf-8') as f:
-            f.write(f"# Riepilogo del Corso: {course_name}\\n\\n")
+        content = []
+        content.append(formatter.format_header(f"Riepilogo Capitolo: {chapter_name}", level=1))
+        content.append(formatter.new_line())
+        content.append("Questo capitolo include le seguenti lezioni:")
+        content.append(formatter.new_line())
 
-            if not valid_chapter_summaries:
-                f.write("Nessun capitolo è stato processato con successo.\\n")
-                logging.warning("Nessun file di riassunto di capitolo fornito per creare il README.md principale.")
-            else:
-                f.write("## Capitoli\\n\\n")
-                for chapter_summary_file in valid_chapter_summaries:
-                    # chapter_title = chapter_summary_file.stem.replace('_summary', '').replace('_', ' ').title()
-                    # Assumiamo che il nome del file di riassunto del capitolo sia tipo 'NomeCapitolo_summary.md'
-                    # Vogliamo che il link sia al file, e il testo del link sia il nome del capitolo.
-                    # Il nome del file è già relativo a base_output_dir se salvato come 'NomeCapitolo_summary.md'
-                    # Il link relativo dal README.md (che è in base_output_dir) al file del capitolo (anch'esso in base_output_dir)
-                    # sarà semplicemente il nome del file.
-                    
-                    # Estrai il titolo del capitolo dal nome del file del riassunto del capitolo
-                    # E.g., da "01 - Introduzione_summary.md" a "01 - Introduzione"
-                    chapter_link_text = chapter_summary_file.stem.replace('_summary', '')
-                    # Rimuovi eventuali prefissi numerici per il testo del link se desiderato,
-                    # ma per ora usiamo il nome del file come base per il testo del link.
-                    # Esempio di pulizia del titolo:
-                    # match = re.match(r"\\d*\\s*[-_]?\\s*(.*)", chapter_link_text)
-                    # if match:
-                    #    chapter_display_name = match.group(1).replace('_', ' ').replace('-', ' ').title()
-                    # else:
-                    #    chapter_display_name = chapter_link_text.replace('_', ' ').replace('-', ' ').title()
-                    
-                    # Per ora, usiamo una versione più semplice per il testo del link, basata sul nome del file
-                    chapter_display_name = chapter_link_text.replace('_', ' ').replace('-', ' ').title()
+        for lesson_file_path in valid_lesson_files:
+            lesson_name = lesson_file_path.stem.replace('_summary', '')
+            # Crea un link relativo dalla posizione del file di riassunto del capitolo
+            # al file della lezione.
+            # Esempio: _CHAPTER_SUMMARY_NomeCapitolo.md -> NomeLezione_summary.md
+            relative_lesson_path = lesson_file_path.name # Link al file nella stessa directory
+            link = formatter.format_link(lesson_name, relative_lesson_path)
+            content.append(formatter.format_list_item(link))
+        
+        content.append(formatter.new_line())
+        content.append(formatter.horizontal_rule())
+        content.append(formatter.new_line())
+        content.append(f"*Riepilogo generato per il capitolo '{chapter_name}'.*")
 
-
-                    # Il link deve essere relativo al README.md. Poiché entrambi sono in base_output_dir,
-                    # il percorso relativo è solo il nome del file del riassunto del capitolo.
-                    relative_link = chapter_summary_file.name
-                    f.write(f"- [{chapter_display_name}]({relative_link})\\n")
-                logging.info(f"Elenco dei capitoli aggiunto al README.md.")
-
-        logging.info(f"File README.md principale creato con successo: {readme_file_path}")
-        return readme_file_path
+        with open(summary_file_path, 'w', encoding='utf-8') as f:
+            f.write("\\n".join(content))
+        
+        logger.info(f"File di riassunto del capitolo '{summary_file_path}' creato con successo.")
+        return summary_file_path
     except IOError as e:
-        logging.error(f"Errore di I/O durante la scrittura del file README.md principale: {e}")
-        return None
+        logger.error(f"Errore di I/O durante la scrittura del file di riassunto del capitolo '{summary_file_path}': {e}")
     except Exception as e:
-        logging.error(f"Errore imprevisto durante la creazione del file README.md principale: {e}")
+        logger.error(f"Errore imprevisto durante la creazione del riassunto del capitolo '{chapter_name}': {e}")
+    
+    return None
+
+def create_main_index(formatter: MarkdownFormatter, course_name: str, chapter_summary_files: List[Optional[Path]], base_output_dir: Path) -> Optional[Path]: # Modificata firma
+    """
+    Crea un file index.md principale per il corso, usando MarkdownFormatter.
+    # ... (docstring unchanged) ...
+    """
+    # Sanitizza il nome del corso per creare un nome di file valido per l'indice
+    # Anche se 'index.md' è standard, se il nome del corso fosse usato altrove, la sanitizzazione è buona pratica.
+    sanitized_course_name = re.sub(r'[\\\\/:*?\"<>|]', '_', course_name)
+    index_file_name = "index.md" # Nome standard per l'indice
+    index_file_path = base_output_dir / index_file_name
+
+    logger.info(f"Creazione del file indice principale per il corso '{course_name}' in '{index_file_path}'")
+
+    valid_chapter_files = [f for f in chapter_summary_files if f is not None]
+
+    if not valid_chapter_files:
+        logger.warning(f"Nessun file di riassunto di capitolo valido fornito per il corso '{course_name}'.")
         return None
+
+    try:
+        content = []
+        content.append(formatter.format_header(f"Indice del Corso: {course_name}", level=1))
+        content.append(formatter.new_line())
+        content.append("Questo corso è organizzato nei seguenti capitoli:")
+        content.append(formatter.new_line())
+
+        for chapter_file_path in valid_chapter_files:
+            # chapter_file_path è tipo: base_output_dir/NomeCapitolo/_CHAPTER_SUMMARY_NomeCapitolo.md
+            # Vogliamo linkare a base_output_dir/NomeCapitolo/_CHAPTER_SUMMARY_NomeCapitolo.md
+            # da base_output_dir/index.md
+            # Quindi il link relativo è NomeCapitolo/_CHAPTER_SUMMARY_NomeCapitolo.md
+            
+            chapter_dir_name = chapter_file_path.parent.name # Estrae "NomeCapitolo"
+            relative_chapter_path = chapter_file_path.relative_to(base_output_dir)
+
+            # chapter_name = chapter_file_path.stem.replace('_CHAPTER_SUMMARY_', '')
+            # Il nome del capitolo è meglio prenderlo dal nome della directory
+            chapter_name = chapter_dir_name
+
+            link = formatter.format_link(f"Capitolo: {chapter_name}", str(relative_chapter_path))
+            content.append(formatter.format_list_item(link))
+            
+        content.append(formatter.new_line())
+        content.append(formatter.horizontal_rule())
+        content.append(formatter.new_line())
+        content.append(f"*Indice generato per il corso '{course_name}'.*")
+
+        with open(index_file_path, 'w', encoding='utf-8') as f:
+            f.write("\\n".join(content))
+        
+        logger.info(f"File indice principale '{index_file_path}' creato con successo.")
+        return index_file_path
+    except IOError as e:
+        logger.error(f"Errore di I/O durante la scrittura del file indice '{index_file_path}': {e}")
+    except Exception as e:
+        logger.error(f"Errore imprevisto durante la creazione del file indice per '{course_name}': {e}")
+        
+    return None
 
 def main():
     """
-    Funzione principale per orchestrare il processo di generazione dei riassunti del corso.
+    Funzione principale per eseguire il generatore di riassunti.
     """
     configure_logging()
-    logging.info("Avvio dell'agente di riassunto corsi.")
-
+    args = parse_arguments()
+    
+    load_dotenv() # Carica le variabili d'ambiente dal file .env
+    
     try:
-        args = parse_arguments()
-        logging.info(f"Argomenti ricevuti: course_dir='{args.course_dir}', output_dir='{args.output_dir}'")
-
-        # 1. Inizializza API Key Manager e ottieni la chiave
-        key_manager = APIKeyManager()
-        api_key = key_manager.get_key()
-        logging.info(f"Chiave API OpenAI caricata correttamente (hash: {key_manager._hash_key(api_key)}).")
-
-        # 2. Configura la directory di output
-        base_output_dir = setup_output_directory(args.course_dir, args.output_dir)
-        logging.info(f"Directory di output configurata: {base_output_dir}")
+        # Inizializza il gestore delle chiavi API
+        # Specifica il nome della variabile d'ambiente se diverso da OPENAI_API_KEY
+        api_key_manager = APIKeyManager(env_var_name="OPENAI_API_KEY")
+        openai_api_key = api_key_manager.get_api_key()
+        # Logga solo un hash della chiave per sicurezza
+        logger.info(f"Chiave API OpenAI caricata con successo. Hash: {api_key_manager.get_hashed_key(truncate_length=8)}")
         
-        course_name = Path(args.course_dir).name
+        # Configura la directory di output
+        output_dir = setup_output_directory(args.course_dir, args.output_dir)
+        course_name = Path(args.course_dir).name # Nome del corso dalla directory di input
 
+        # Istanzia il MarkdownFormatter
+        formatter = MarkdownFormatter() # NUOVA ISTANZA
 
-        # 3. Elenca le directory dei capitoli
+        # Elenca le directory dei capitoli
         chapter_dirs = list_chapter_directories(args.course_dir)
         if not chapter_dirs:
-            logging.warning("Nessun capitolo trovato nella directory del corso. Uscita.")
+            logger.warning(f"Nessun capitolo trovato nella directory del corso '{args.course_dir}'.")
             return
 
-        total_lessons_processed = 0
-        total_lessons_failed = 0
         all_chapter_summary_files: List[Optional[Path]] = []
 
-        # 4. Processa ogni capitolo
         for chapter_dir in chapter_dirs:
-            logging.info(f"Inizio elaborazione capitolo: {chapter_dir.name}")
-            # La funzione process_chapter restituisce una lista di Path ai riassunti delle lezioni
-            lesson_summary_files_paths = process_chapter(chapter_dir, base_output_dir, api_key)
+            # Processa ogni capitolo (lezioni al suo interno)
+            # process_chapter ora ritorna una lista di Path ai file di riassunto delle lezioni
+            lesson_summary_files_for_chapter = process_chapter(formatter, chapter_dir, output_dir, openai_api_key) # Passa formatter
             
-            processed_in_chapter = sum(1 for p in lesson_summary_files_paths if p is not None)
-            failed_in_chapter = len(lesson_summary_files_paths) - processed_in_chapter
-            total_lessons_processed += processed_in_chapter
-            total_lessons_failed += failed_in_chapter
+            # Filtra i None se alcune lezioni non hanno prodotto un output
+            valid_lesson_summary_files = [f for f in lesson_summary_files_for_chapter if f is not None]
             
-            logging.info(f"Elaborazione capitolo '{chapter_dir.name}' completata. "
-                         f"Lezioni elaborate con successo: {processed_in_chapter}, Lezioni fallite: {failed_in_chapter}")
-
-            if any(p is not None for p in lesson_summary_files_paths): # Crea il riassunto del capitolo solo se almeno una lezione è stata processata
-                chapter_summary_file = create_chapter_summary(chapter_dir, lesson_summary_files_paths, base_output_dir)
+            if valid_lesson_summary_files:
+                # Crea il file di riassunto del capitolo
+                chapter_summary_file = create_chapter_summary(formatter, chapter_dir, valid_lesson_summary_files, output_dir) # Passa formatter
                 all_chapter_summary_files.append(chapter_summary_file)
             else:
-                logging.warning(f"Nessuna lezione elaborata con successo per il capitolo '{chapter_dir.name}'. "
-                                f"Il file di riassunto del capitolo non sarà creato.")
-                all_chapter_summary_files.append(None)
+                logger.warning(f"Nessun riassunto di lezione valido generato per il capitolo '{chapter_dir.name}'.")
+                all_chapter_summary_files.append(None) # Aggiungi None per mantenere la corrispondenza se necessario
 
+        # Filtra i None se alcuni capitoli non hanno prodotto un output
+        valid_chapter_summary_files = [f for f in all_chapter_summary_files if f is not None]
 
-        # 5. Crea il file README.md principale
-        if any(cs_path is not None for cs_path in all_chapter_summary_files):
-            main_index_path = create_main_index(course_name, all_chapter_summary_files, base_output_dir)
-            if main_index_path:
-                logging.info(f"File README.md principale creato con successo: {main_index_path}")
-            else:
-                logging.error("Creazione del file README.md principale fallita.")
+        if valid_chapter_summary_files:
+            # Crea l'indice principale del corso
+            create_main_index(formatter, course_name, valid_chapter_summary_files, output_dir) # Passa formatter
         else:
-            logging.warning("Nessun riassunto di capitolo creato. Il README.md principale non sarà generato.")
+            logger.warning(f"Nessun file di riassunto di capitolo valido generato per il corso '{course_name}'.")
 
-
-        # 6. Logga statistiche finali
-        logging.info("Elaborazione del corso completata.")
-        logging.info(f"Totale lezioni elaborate con successo: {total_lessons_processed}")
-        logging.info(f"Totale lezioni fallite: {total_lessons_failed}")
-        logging.info(f"I riassunti sono stati salvati in: {base_output_dir.resolve()}")
-
+        logger.info("Elaborazione del corso completata.")
+        
     except ValueError as ve:
-        logging.error(f"Errore di validazione: {ve}")
+        logger.error(f"Errore di configurazione o di input: {ve}")
+    except openai.APIError as api_err: # type: ignore
+        # Questo blocco potrebbe essere ridondante se gli errori API sono già gestiti
+        # nelle funzioni chiamate, ma può servire come un catch-all finale.
+        logger.error(f"Errore API OpenAI durante l'esecuzione principale: {api_err}")
     except Exception as e:
-        logging.error(f"Errore imprevisto durante l'esecuzione: {e}", exc_info=True)
-    finally:
-        logging.info("Termine dell'agente di riassunto corsi.")
+        logger.error(f"Errore imprevisto durante l'esecuzione principale: {e}", exc_info=True)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
