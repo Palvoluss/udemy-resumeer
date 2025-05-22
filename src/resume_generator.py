@@ -13,7 +13,7 @@ import webvtt # type: ignore
 import PyPDF2 # type: ignore
 from typing import List, Optional, Union # Union potrebbe essere necessario per coerenza con altre funzioni, lo lascio per ora
 from langchain_text_splitters import RecursiveCharacterTextSplitter # type: ignore
-from api_key_manager import APIKeyManager # IMPORT AGGIUNTO
+from .api_key_manager import APIKeyManager # IMPORT AGGIUNTO
 # from dotenv import load_dotenv
 # import hashlib
 import openai # type: ignore
@@ -348,16 +348,18 @@ def summarize_with_openai(text_content: str, api_key: str, system_prompt_content
         logger.error("La chiave API di OpenAI non è stata fornita per il riassunto.")
         raise ValueError("La chiave API di OpenAI è richiesta per il riassunto.")
 
+    # Definizioni dei nuovi system prompt
+    DEFAULT_SYSTEM_PROMPT = (
+        "Presenta i seguenti contenuti in modo chiaro, dettagliato e ben strutturato, come se stessi spiegando direttamente l'argomento. "
+        "Evita ogni riferimento al fatto che stai analizzando un testo (es. non usare frasi come 'il testo originale afferma', 'questo documento descrive'). "
+        "L'obiettivo è estrarre e presentare direttamente i concetti chiave, le definizioni, i processi e le informazioni cruciali. "
+        "Utilizza elenchi puntati, numerati o tabelle se appropriato per migliorare la chiarezza e l'organizzazione. "
+        "Mantieni un tono oggettivo, informativo e autorevole, assicurando accuratezza e completezza. Scrivi in italiano fluente."
+    )
+
+    current_prompt = system_prompt_content if system_prompt_content is not None else DEFAULT_SYSTEM_PROMPT
+    
     if system_prompt_content is None:
-        system_prompt_content = (
-            "Sei un assistente AI specializzato nel creare riassunti estremamente precisi, dettagliati e ben strutturati. "
-            "Il tuo obiettivo è mantenere tutti i concetti chiave, le informazioni cruciali e le sfumature del testo originale. "
-            "Quando appropriato, utilizza rappresentazioni schematiche come liste puntate, numerate o tabelle per organizzare le informazioni in modo chiaro e logico. "
-            "Non abbreviare eccessivamente; la completezza e l'accuratezza sono prioritarie rispetto alla brevità. "
-            "Assicurati che il riassunto sia scritto in italiano fluente e grammaticalmente corretto. "
-            "Evita interpretazioni personali o l'aggiunta di informazioni non presenti nel testo originale. "
-            "Il riassunto deve essere autosufficiente e comprensibile senza fare riferimento al testo sorgente."
-        )
         logger.debug("Utilizzo del prompt di sistema di default per il riassunto.")
     else:
         logger.debug(f"Utilizzo del prompt di sistema personalizzato: \"{system_prompt_content[:100]}...\"")
@@ -368,7 +370,7 @@ def summarize_with_openai(text_content: str, api_key: str, system_prompt_content
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": system_prompt_content},
+                {"role": "system", "content": current_prompt},
                 {"role": "user", "content": text_content}
             ],
             temperature=0.5,
@@ -428,10 +430,17 @@ def summarize_long_text(text: str, api_key: str, max_chunk_size: int = 3800, ove
 
     # Map: riassumere ogni chunk individualmente
     individual_summaries = []
+    SYSTEM_PROMPT_CHUNK = ( # Definito qui per chiarezza o potrebbe essere globale
+        "Fornisci una spiegazione chiara e concisa dei seguenti contenuti. "
+        "Presenta le informazioni come se stessi insegnando direttamente l'argomento. "
+        "Evita ogni riferimento al fatto che stai analizzando un testo (es. non usare frasi come 'il testo dice', 'l'autore menziona'). "
+        "Concentrati sull'estrazione e la presentazione diretta dei concetti chiave, delle definizioni e dei processi descritti. "
+        "Mantieni un tono oggettivo, informativo e autorevole. L'output deve essere in italiano fluente."
+    )
     for i, chunk in enumerate(chunks):
         logger.info(f"Riassumo chunk {i+1}/{len(chunks)}...")
         try:
-            chunk_summary = summarize_with_openai(chunk, api_key, system_prompt_content="You are an assistant that creates precise and detailed summaries of text chunks. Focus on extracting key information and concepts.")
+            chunk_summary = summarize_with_openai(chunk, api_key, system_prompt_content=SYSTEM_PROMPT_CHUNK)
             individual_summaries.append(chunk_summary)
             logger.info(f"Riassunto chunk {i+1} completato.")
         except Exception as e:
@@ -446,41 +455,53 @@ def summarize_long_text(text: str, api_key: str, max_chunk_size: int = 3800, ove
 
     # Reduce: riassumere i riassunti combinati
     logger.info("Creazione del meta-riassunto dei chunk combinati...")
-    meta_summary_prompt = (
-        "You are a highly skilled summarization assistant. "
-        "The following text consists of multiple summaries of consecutive text chunks from a single document. "
-        "Your task is to synthesize these individual summaries into a single, coherent, and comprehensive summary of the entire original document. "
-        "Ensure that all key information and concepts from the individual summaries are retained and integrated smoothly. "
-        "The final summary should be detailed and precise. Use schematic representations (bullet points, tables) where appropriate to organize information clearly. "
-        "Focus on accuracy and completeness rather than brevity. The user is expecting a detailed summary of the original content, not a summary of summaries."
-        "Do not explicitly mention that you are summarizing summaries or chunks."
+    SYSTEM_PROMPT_META_SUMMARY = ( # Definito qui per chiarezza o potrebbe essere globale
+        "Sei un esperto nella sintesi di informazioni complesse. Il testo fornito è una sequenza di spiegazioni dettagliate "
+        "provenienti da diverse sezioni di un documento o lezione più ampio. Il tuo compito è integrare queste spiegazioni "
+        "in un discorso unico, coerente e completo che copra l'intero argomento originale. "
+        "Presenta il risultato come una trattazione organica dell'argomento, non come un riassunto di altri testi. "
+        "Assicurati che tutte le informazioni e i concetti chiave siano mantenuti e integrati fluidamente. "
+        "L'esposizione finale deve essere dettagliata, precisa e presentata in italiano fluente e autorevole, come se stessi spiegando direttamente la materia. "
+        "Utilizza elenchi puntati o numerati, o tabelle, se aiutano a chiarire e strutturare le informazioni. "
+        "Evita assolutamente frasi come 'il testo precedente diceva', 'combinando i punti precedenti', o qualsiasi riferimento al processo di sintesi."
     )
-    final_summary = summarize_with_openai(combined_summaries_text, api_key, system_prompt_content=meta_summary_prompt)
+    final_summary = summarize_with_openai(combined_summaries_text, api_key, system_prompt_content=SYSTEM_PROMPT_META_SUMMARY)
     logger.info("Meta-riassunto completato.")
     return final_summary
 
-def write_lesson_summary(formatter: MarkdownFormatter, lesson_title: str, summary_text: str, output_file_path: Path) -> None: # Modificata firma
-    """
+def write_lesson_summary(formatter: MarkdownFormatter, lesson_title: str, vtt_summary: str, pdf_summary: Optional[str], output_file_path: Path) -> None: # Modificata firma
+    """ 
     Scrive il riassunto di una lezione in un file Markdown, usando MarkdownFormatter.
-    # ... (docstring unchanged) ...
+    Include una sezione separata per il riassunto dei PDF, se presente.
     """
     logger.info(f"Scrittura del riassunto della lezione '{lesson_title}' in: {output_file_path}")
-    # Assicura che la directory genitore esista
     output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         content = []
         content.append(formatter.format_header(lesson_title, level=2))
         content.append(formatter.new_line())
-        content.append(summary_text) # Il testo del riassunto dovrebbe già essere formattato o essere testo puro
+        
+        if vtt_summary and vtt_summary.strip():
+            content.append(vtt_summary)
+        else:
+            content.append(formatter.format_italic("Nessun riassunto disponibile per il contenuto video principale."))
+        
+        content.append(formatter.new_line())
+
+        if pdf_summary and pdf_summary.strip():
+            content.append(formatter.new_line()) # Linea vuota prima della regola orizzontale
+            content.append(formatter.horizontal_rule())
+            content.append(formatter.new_line())
+            content.append(formatter.format_header("Approfondimenti dai Materiali PDF", level=3))
+            content.append(formatter.new_line())
+            content.append(pdf_summary)
         
         with open(output_file_path, 'w', encoding='utf-8') as f:
-            f.write("\\n".join(content))
+            f.write("\n".join(content))
         logger.info(f"Riassunto della lezione '{lesson_title}' scritto con successo.")
     except IOError as e:
         logger.error(f"Errore di I/O durante la scrittura del file di riassunto della lezione '{output_file_path}': {e}")
-        # Potrebbe essere utile rilanciare l'eccezione o gestirla in modo più specifico
-        # a seconda dei requisiti di robustezza dell'applicazione. Per ora, loggo e continuo.
     except Exception as e:
         logger.error(f"Errore imprevisto durante la scrittura del riassunto della lezione '{lesson_title}': {e}")
 
@@ -564,29 +585,30 @@ def find_related_pdf(vtt_file_path: Path, chapter_dir: Path) -> List[Path]:
     
     return [] # Restituisce lista vuota se non trovati o dopo logica di deduplicazione se related_pdfs rimane vuota
 
-def process_lesson(formatter: MarkdownFormatter, vtt_file: Path, chapter_dir: Path, base_output_dir: Path, api_key: str) -> Optional[Path]: # Modificata firma
-    """
-    Processa un singolo file VTT e i PDF correlati per generare un riassunto della lezione.
-    # ... (docstring unchanged) ...
-    """
-    lesson_name = vtt_file.stem  # Nome del file senza estensione
-    # Sanitizza il nome della lezione per creare un nome di file valido
+def process_lesson(formatter: MarkdownFormatter, vtt_file: Path, chapter_dir: Path, base_output_dir: Path, api_key: str) -> Optional[Path]:
+    lesson_name = vtt_file.stem
     sanitized_lesson_name = re.sub(r'[\\\\/:*? \"<>|]', '_', lesson_name)
     lesson_output_filename = f"{sanitized_lesson_name}_summary.md"
-    
-    # Costruisci il percorso di output per il riassunto della lezione
-    # Mantiene la struttura capitolo/lezione nella directory di output
     chapter_name_for_path = chapter_dir.name
     lesson_output_path = base_output_dir / chapter_name_for_path / lesson_output_filename
     
     logger.info(f"--- Inizio elaborazione lezione: {lesson_name} ---")
 
     try:
-        # Estrai il testo dal file VTT
         vtt_text = extract_text_from_vtt(vtt_file)
         logger.info(f"Testo estratto da VTT '{vtt_file.name}': {len(vtt_text)} caratteri.")
 
-        # Trova e processa i PDF correlati
+        vtt_summary = "" # Inizializza vtt_summary
+        if vtt_text.strip():
+            logger.info(f"Riassumo il testo VTT per la lezione '{lesson_name}' ({len(vtt_text)} caratteri)...")
+            vtt_summary = summarize_long_text(vtt_text, api_key)
+            if vtt_summary:
+                logger.info(f"Riassunto VTT generato per '{lesson_name}': {len(vtt_summary)} caratteri.")
+            else:
+                logger.warning(f"Riassunto VTT per '{lesson_name}' è vuoto.")
+        else:
+            logger.warning(f"Testo VTT per '{lesson_name}' è vuoto. Nessun riassunto VTT generato.")
+
         related_pdfs = find_related_pdf(vtt_file, chapter_dir)
         pdf_texts: List[str] = []
         if related_pdfs:
@@ -604,29 +626,26 @@ def process_lesson(formatter: MarkdownFormatter, vtt_file: Path, chapter_dir: Pa
         else:
             logger.info(f"Nessun PDF correlato trovato per '{vtt_file.name}'.")
 
-        # Combina il testo VTT e PDF (se presente)
-        combined_text = vtt_text
+        pdf_summary_content: Optional[str] = None # Inizializza pdf_summary_content
         if pdf_texts:
-            combined_text += "\\n\\n--- Contenuto PDF Aggiuntivo ---\\n\\n" + "\\n\\n".join(pdf_texts)
+            combined_pdf_text = "\n\n--- Separatore PDF Interno ---\n\n".join(pdf_texts)
+            if combined_pdf_text.strip():
+                logger.info(f"Riassumo il testo PDF combinato per '{lesson_name}' ({len(combined_pdf_text)} caratteri)...")
+                pdf_summary_content = summarize_long_text(combined_pdf_text, api_key)
+                if pdf_summary_content:
+                    logger.info(f"Riassunto PDF generato per '{lesson_name}': {len(pdf_summary_content)} caratteri.")
+                else:
+                    logger.warning(f"Riassunto PDF per '{lesson_name}' è vuoto.")
+            else:
+                logger.info(f"Nessun contenuto testuale PDF combinato da riassumere per '{lesson_name}'.")
         
-        if not combined_text.strip():
-            logger.warning(f"Nessun contenuto testuale da riassumere per la lezione '{lesson_name}'. Salto il riassunto.")
-            return None
-
-        # Riassumi il testo combinato
-        logger.info(f"Riassumo il testo combinato per la lezione '{lesson_name}' ({len(combined_text)} caratteri).")
-        # TODO: Considerare se il prompt di default di summarize_long_text è adeguato per le lezioni
-        # o se serve un system_prompt specifico per i riassunti di lezione.
-        summary_text = summarize_long_text(combined_text, api_key)
-        
-        if summary_text:
-            logger.info(f"Riassunto generato per la lezione '{lesson_name}': {len(summary_text)} caratteri.")
-            # Scrivi il riassunto in un file Markdown
-            write_lesson_summary(formatter, lesson_name, summary_text, lesson_output_path) # Passa formatter
-            logger.info(f"Riassunto della lezione '{lesson_name}' scritto in: {lesson_output_path}")
+        # Scrivi il riassunto solo se almeno uno dei due (VTT o PDF) è stato generato
+        if (vtt_summary and vtt_summary.strip()) or (pdf_summary_content and pdf_summary_content.strip()):
+            write_lesson_summary(formatter, lesson_name, vtt_summary, pdf_summary_content, lesson_output_path)
+            # logger.info(f"Riassunto della lezione '{lesson_name}' scritto in: {lesson_output_path}") # Già loggato da write_lesson_summary
             return lesson_output_path
         else:
-            logger.warning(f"Il riassunto per la lezione '{lesson_name}' è vuoto. Nessun file generato.")
+            logger.warning(f"Nessun riassunto (VTT o PDF) valido generato per la lezione '{lesson_name}'. Nessun file scritto.")
             return None
 
     except ValueError as ve:
@@ -644,7 +663,7 @@ def process_chapter(formatter: MarkdownFormatter, chapter_dir: Path, base_output
     # ... (docstring unchanged) ...
     """
     chapter_name = chapter_dir.name
-    logger.info(f"=== Inizio elaborazione capitolo: {chapter_name} ===\")
+    logger.info(f"=== Inizio elaborazione capitolo: {chapter_name} ===")
     
     # Crea la sottodirectory per l'output del capitolo, se non esiste
     chapter_output_dir = base_output_dir / chapter_name
@@ -672,7 +691,7 @@ def process_chapter(formatter: MarkdownFormatter, chapter_dir: Path, base_output
             # e registrare None per indicare il fallimento.
             processed_lesson_files.append(None) 
             
-    logger.info(f"=== Fine elaborazione capitolo: {chapter_name}. {len(processed_lesson_files)} lezioni processate. ===\")
+    logger.info(f"=== Fine elaborazione capitolo: {chapter_name}. {len(processed_lesson_files)} lezioni processate. ===")
     return processed_lesson_files
 
 def create_chapter_summary(formatter: MarkdownFormatter, chapter_dir: Path, lesson_summary_files: List[Optional[Path]], base_output_dir: Path) -> Optional[Path]: # Modificata firma
@@ -725,7 +744,7 @@ def create_chapter_summary(formatter: MarkdownFormatter, chapter_dir: Path, less
         content.append(f"*Riepilogo generato per il capitolo '{chapter_name}'.*")
 
         with open(summary_file_path, 'w', encoding='utf-8') as f:
-            f.write("\\n".join(content))
+            f.write("\n".join(content))
         
         logger.info(f"File di riassunto del capitolo '{summary_file_path}' creato con successo.")
         return summary_file_path
@@ -784,7 +803,7 @@ def create_main_index(formatter: MarkdownFormatter, course_name: str, chapter_su
         content.append(f"*Indice generato per il corso '{course_name}'.*")
 
         with open(index_file_path, 'w', encoding='utf-8') as f:
-            f.write("\\n".join(content))
+            f.write("\n".join(content))
         
         logger.info(f"File indice principale '{index_file_path}' creato con successo.")
         return index_file_path
@@ -807,10 +826,10 @@ def main():
     try:
         # Inizializza il gestore delle chiavi API
         # Specifica il nome della variabile d'ambiente se diverso da OPENAI_API_KEY
-        api_key_manager = APIKeyManager(env_var_name="OPENAI_API_KEY")
-        openai_api_key = api_key_manager.get_api_key()
+        api_key_manager = APIKeyManager(key_name="OPENAI_API_KEY")
+        openai_api_key = api_key_manager.get_key()
         # Logga solo un hash della chiave per sicurezza
-        logger.info(f"Chiave API OpenAI caricata con successo. Hash: {api_key_manager.get_hashed_key(truncate_length=8)}")
+        logger.info(f"Chiave API OpenAI caricata con successo. Hash: {api_key_manager._hash_key(openai_api_key)}")
         
         # Configura la directory di output
         output_dir = setup_output_directory(args.course_dir, args.output_dir)

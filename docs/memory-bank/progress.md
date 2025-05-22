@@ -259,7 +259,7 @@
 
 **Step 18: Orchestrate Complete Course Processing**
 - **Stato**: Completato
-- **Data**: 20 Maggio 2025 (data odierna)
+- **Data**: 20 Maggio 2025 
 - **Descrizione**: La funzione `main()` in `resume_generator.py` è stata implementata per orchestrare l'intero processo di generazione dei riassunti del corso. Questa funzione si occupa di:
     1. Analizzare gli argomenti da riga di comando (`course_dir`, `output_dir`).
     2. Configurare il sistema di logging.
@@ -275,5 +275,23 @@
 - **Test**: L'utente ha verificato il funzionamento dopo la correzione dell'import mancante.
 - **Note**: Questa integrazione completa il flusso principale dell'applicazione, permettendo l'elaborazione end-to-end di un corso dalla riga di comando.
 
-**Step 19: Implement Advanced PDF Text Extraction (OCR)**
+--- 
+## Progressi Basati sul Piano di Implementazione Revisionato (docs/memory-bank/implementation-plan.md)
+---
+
+**Step 19: Riorganizzazione Modulare e Miglioramenti Strutturali e di Contenuto (Fase 1.1 del Piano Revisionato)**
+- **Stato**: Completato
+- **Data**: 22 Maggio 2024 (data odierna)
+- **Descrizione**:
+    1.  **Struttura Modulare**: Il progetto è stato riorganizzato introducendo una directory `src` per il codice sorgente e una directory `tests` per i test. I file Python esistenti (`resume_generator.py`, `api_key_manager.py` e i vari `test_*.py`) sono stati spostati nelle rispettive nuove directory.
+    2.  **Esecuzione come Modulo**: Lo script principale `resume_generator.py` ora viene eseguito come modulo (es. `python -m src.resume_generator ...`) per supportare correttamente le importazioni relative all'interno del package `src`.
+    3.  **`MarkdownFormatter`**: Creata la classe `MarkdownFormatter` in `src/markdown_formatter.py` per centralizzare la generazione di elementi Markdown. Questa classe è stata integrata in `resume_generator.py` per formattare i file di output delle lezioni, dei capitoli e dell'indice principale.
+    4.  **Template Markdown Basilari**: Le funzioni `write_lesson_summary`, `create_chapter_summary` e `create_main_index` sono state aggiornate per utilizzare `MarkdownFormatter` e produrre output Markdown strutturato con link relativi corretti. Il file di riepilogo del capitolo è ora salvato all'interno della cartella del capitolo stesso, e l'indice principale è `index.md`.
+    5.  **Stile Riassunti (No Terza Persona)**: I prompt di sistema per OpenAI (sia per i chunk di testo che per il meta-riassunto finale) sono stati modificati significativamente. L'obiettivo è generare riassunti in uno stile più diretto, evitando la terza persona (es. "il testo dice") e presentando le informazioni come se si stesse spiegando direttamente l'argomento. Questo migliora la fruibilità del riassunto per l'utente finale.
+    6.  **Gestione Riassunti PDF**: Modificata la logica di `process_lesson` e `write_lesson_summary`. Ora, il contenuto VTT e il contenuto PDF vengono riassunti separatamente. Nel file di output della lezione, il riassunto del VTT appare per primo, seguito da una sezione dedicata "Approfondimenti dai Materiali PDF" che contiene il riassunto del contenuto PDF (se presente). Questo permette una valutazione più chiara dell'apporto dei PDF.
+    7.  **Correzioni di Bug**: Risolti vari `SyntaxError` e `ImportError`/`AttributeError` emersi durante la riorganizzazione e l'integrazione delle nuove funzionalità.
+- **Test**: L'utente ha verificato il funzionamento con un corso di esempio, confermando la corretta generazione dei file, la nuova struttura dei riassunti (con sezione PDF separata) e lo stile di scrittura modificato.
+- **Note**: Questa serie di modifiche completa gran parte della Fase 1.1 ("Fondamenta e Output di Base") del piano di sviluppo revisionato. L'integrazione di Langfuse (Fase 1.2) e un sistema di template per prompt più formalizzato (Fase 1.3) rimangono come passi successivi, sebbene i prompt siano già stati migliorati.
+
+**Step 20: Implement Advanced PDF Text Extraction (OCR)**
 - **Stato**: In Attesa
