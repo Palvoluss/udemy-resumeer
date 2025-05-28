@@ -8,6 +8,9 @@ pathlib>=1.0.1
 PyPDF2>=3.0.0
 webvtt-py>=0.4.6
 
+# Dipendenze per il monitoraggio LLM
+langfuse>=2.0.0
+
 # Dipendenze per il text processing
 nltk>=3.8.0
 

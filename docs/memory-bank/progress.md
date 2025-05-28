@@ -293,5 +293,37 @@
 - **Test**: L'utente ha verificato il funzionamento con un corso di esempio, confermando la corretta generazione dei file, la nuova struttura dei riassunti (con sezione PDF separata) e lo stile di scrittura modificato.
 - **Note**: Questa serie di modifiche completa gran parte della Fase 1.1 ("Fondamenta e Output di Base") del piano di sviluppo revisionato. L'integrazione di Langfuse (Fase 1.2) e un sistema di template per prompt più formalizzato (Fase 1.3) rimangono come passi successivi, sebbene i prompt siano già stati migliorati.
 
-**Step 20: Implement Advanced PDF Text Extraction (OCR)**
-- **Stato**: In Attesa
+**Step 20: Integrazione con Langfuse per Monitoraggio LLM (Fase 1.2 del Piano Revisionato)**
+- **Stato**: Completato
+- **Data**: 29 Maggio 2025
+- **Descrizione**: Implementata l'integrazione con Langfuse per il monitoraggio avanzato delle chiamate ai modelli LLM.
+    - Aggiunta la dipendenza `langfuse>=2.0.0` al file `requirements.txt`.
+    - Creata la classe `LangfuseTracker` nel nuovo file `src/langfuse_tracker.py`. Questa classe gestisce:
+        - Inizializzazione sicura da variabili d'ambiente (`LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_HOST`).
+        - Creazione e gestione di "trace" e "session" per raggruppare le chiamate relative a un corso.
+        - Metodi per tracciare chiamate LLM individuali (`track_llm_call`), registrando input, output, nome del modello, metadati contestuali, utilizzo dei token, latenza ed errori.
+        - Metodi per tracciare metriche aggregate di elaborazione (`track_processing_metrics`).
+        - Gestione robusta degli errori e degradazione controllata.
+        - Metodo `flush()` per assicurare l'invio dei dati a Langfuse.
+    - Aggiornato `src/__init__.py` per includere `LangfuseTracker`.
+    - Modificate le funzioni `summarize_with_openai`, `summarize_long_text`, `process_lesson`, e `process_chapter` in `src/resume_generator.py` per accettare e propagare l'istanza di `LangfuseTracker`.
+    - Aggiornata la funzione `main` in `src/resume_generator.py` per:
+        - Inizializzare `LangfuseTracker`.
+        - Avviare una sessione Langfuse (`start_session`) all'inizio dell'elaborazione del corso.
+        - Passare l'istanza del tracker attraverso il flusso di elaborazione (a `process_chapter`).
+        - Terminare la sessione (`end_session`) e inviare tutti i dati (`flush`) nel blocco `finally` per garantire l'esecuzione.
+    - Risolto un `ImportError` relativo a `CreateTrace` in `langfuse.model` rimuovendo l'importazione non utilizzata.
+    - Risolto un errore di runtime ("Unexpected error occurred") con Langfuse modificando la gestione della terminazione della traccia in `LangfuseTracker.end_session()`, rimuovendo l'aggiornamento esplicito di `end_time`.
+- **Test**: L'esecuzione dello script con le variabili d'ambiente Langfuse configurate funziona correttamente. È consigliato verificare la dashboard Langfuse per la corretta registrazione delle trace, delle chiamate LLM e dei metadati.
+- **Note**: L'integrazione è opzionale e non invasiva. È fondamentale aggiungere le chiavi `LANGFUSE_SECRET_KEY` e `LANGFUSE_PUBLIC_KEY` al file `.env` per attivare il tracciamento.
+
+## Fase Y: Miglioramenti alla Formattazione Markdown
+
+### Step 1.3 (Piano Originale): Implementazione di un Formatter Markdown
+- **Stato**: Non iniziato
+- **Descrizione**: Creare una classe o modulo `MarkdownFormatter` per gestire la generazione di elementi Markdown (titoli, liste, link, tabelle, ecc.) in modo programmatico.
+- **Obiettivo**: Centralizzare la logica di formattazione, migliorare la leggibilità del codice che genera Markdown, e facilitare future modifiche allo stile dell'output.
+
+---
+*Questo file di avanzamento è un esempio e andrebbe aggiornato man mano che il progetto evolve.*
+*Le date sono indicative e servono a dare un'idea della progressione temporale.*

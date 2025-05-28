@@ -2,4 +2,9 @@
 # Copia questo file come .env nella directory principale e imposta i valori appropriati
 
 # Chiave API di OpenAI - Obbligatoria per le funzionalità di riassunto
-OPENAI_API_KEY=your_openai_api_key_here 
+OPENAI_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Chiavi per Langfuse
+LANGFUSE_SECRET_KEY="sk-lf-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+LANGFUSE_PUBLIC_KEY="pk-lf-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# LANGFUSE_HOST="https://your-langfuse-instance.com" # Decommenta e imposta se usi un'istanza self-hosted 

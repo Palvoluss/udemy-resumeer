@@ -8,12 +8,14 @@ e genera riassunti intelligenti utilizzando l'API di OpenAI.
 import argparse
 import os
 import logging
+import time
 from pathlib import Path
 import webvtt # type: ignore
 import PyPDF2 # type: ignore
 from typing import List, Optional, Union # Union potrebbe essere necessario per coerenza con altre funzioni, lo lascio per ora
 from langchain_text_splitters import RecursiveCharacterTextSplitter # type: ignore
 from .api_key_manager import APIKeyManager # IMPORT AGGIUNTO
+from .langfuse_tracker import LangfuseTracker # NUOVO IMPORT
 # from dotenv import load_dotenv
 # import hashlib
 import openai # type: ignore
@@ -318,7 +320,15 @@ def chunk_text(text: str, max_chunk_size: int = 4000, overlap: int = 200) -> Lis
         logging.error(f"Errore durante la divisione del testo in chunks: {e}")
         raise Exception(f"Errore durante la divisione del testo in chunks: {e}")
 
-def summarize_with_openai(text_content: str, api_key: str, system_prompt_content: Optional[str] = None) -> str:
+def summarize_with_openai(
+    text_content: str, 
+    api_key: str, 
+    system_prompt_content: Optional[str] = None,
+    langfuse_tracker: Optional[LangfuseTracker] = None,
+    chapter_name: Optional[str] = None,
+    lesson_name: Optional[str] = None,
+    content_type: str = "vtt"
+) -> str:
     """
     Genera un riassunto di un testo utilizzando l'API Chat Completions di OpenAI.
     # Ripristino docstring originale e logica interna se alterata.
@@ -327,6 +337,10 @@ def summarize_with_openai(text_content: str, api_key: str, system_prompt_content
         api_key (str): La chiave API di OpenAI.
         system_prompt_content (Optional[str]): Il contenuto del prompt di sistema. 
                                                Se None, utilizza un prompt di default.
+        langfuse_tracker (Optional[LangfuseTracker]): Tracker per il monitoraggio LLM.
+        chapter_name (Optional[str]): Nome del capitolo per il tracciamento.
+        lesson_name (Optional[str]): Nome della lezione per il tracciamento.
+        content_type (str): Tipo di contenuto ("vtt", "pdf", "meta_summary").
 
     Returns:
         str: Il testo riassunto.
@@ -364,17 +378,35 @@ def summarize_with_openai(text_content: str, api_key: str, system_prompt_content
     else:
         logger.debug(f"Utilizzo del prompt di sistema personalizzato: \"{system_prompt_content[:100]}...\"")
 
+    # Variabili per il tracciamento
+    start_time = time.time()
+    model_name = "gpt-4o-mini"
+    error_message = None
+    summary = ""
+    token_usage = None
+
     try:
         client = openai.OpenAI(api_key=api_key)
-        logger.info("Chiamata all'API Chat Completions di OpenAI con il modello gpt-3.5-turbo.")
+        logger.info("Chiamata all'API Chat Completions di OpenAI con il modello gpt-4o-mini.")
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model_name,
             messages=[
                 {"role": "system", "content": current_prompt},
                 {"role": "user", "content": text_content}
             ],
             temperature=0.5,
         )
+        
+        # Calcola latenza
+        latency_ms = (time.time() - start_time) * 1000
+        
+        # Estrai informazioni sui token
+        if hasattr(response, 'usage') and response.usage:
+            token_usage = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens
+            }
         
         summary = response.choices[0].message.content
         if summary:
@@ -383,25 +415,67 @@ def summarize_with_openai(text_content: str, api_key: str, system_prompt_content
             logger.warning("OpenAI ha restituito un riassunto vuoto.")
             summary = "L'API di OpenAI ha restituito un riassunto vuoto."
 
+        # Traccia la chiamata di successo
+        if langfuse_tracker and langfuse_tracker.is_enabled():
+            langfuse_tracker.track_llm_call(
+                input_text=text_content,
+                output_text=summary,
+                model=model_name,
+                chapter_name=chapter_name,
+                lesson_name=lesson_name,
+                content_type=content_type,
+                token_usage=token_usage,
+                latency_ms=latency_ms
+            )
+
         return summary.strip() if summary else ""
 
     except openai.APIConnectionError as e:
         logger.error(f"Errore di connessione all'API OpenAI: {e}")
+        error_message = f"Errore di connessione: {str(e)}"
         raise
     except openai.RateLimitError as e:
         logger.error(f"Rate limit dell'API OpenAI superato: {e}")
+        error_message = f"Rate limit superato: {str(e)}"
         raise
     except openai.AuthenticationError as e:
         logger.error(f"Errore di autenticazione con l'API OpenAI (chiave API non valida?): {e}")
+        error_message = f"Errore di autenticazione: {str(e)}"
         raise
     except openai.APIStatusError as e:
         logger.error(f"Errore API OpenAI (status {e.status_code}): {e.response}")
+        error_message = f"Errore API (status {e.status_code}): {str(e)}"
         raise
     except Exception as e:
         logger.error(f"Errore imprevisto durante la chiamata all'API OpenAI: {e}")
+        error_message = f"Errore imprevisto: {str(e)}"
         raise Exception(f"Errore imprevisto durante la chiamata all'API OpenAI: {e}")
+    finally:
+        # Traccia gli errori se si verificano
+        if error_message and langfuse_tracker and langfuse_tracker.is_enabled():
+            latency_ms = (time.time() - start_time) * 1000
+            langfuse_tracker.track_llm_call(
+                input_text=text_content,
+                output_text="",
+                model=model_name,
+                chapter_name=chapter_name,
+                lesson_name=lesson_name,
+                content_type=content_type,
+                token_usage=token_usage,
+                latency_ms=latency_ms,
+                error=error_message
+            )
 
-def summarize_long_text(text: str, api_key: str, max_chunk_size: int = 3800, overlap: int = 150) -> str:
+def summarize_long_text(
+    text: str, 
+    api_key: str, 
+    max_chunk_size: int = 3800, 
+    overlap: int = 150,
+    langfuse_tracker: Optional[LangfuseTracker] = None,
+    chapter_name: Optional[str] = None,
+    lesson_name: Optional[str] = None,
+    content_type: str = "vtt"
+) -> str:
     """
     Riassume un testo lungo, gestendo il chunking e utilizzando un approccio map-reduce.
 
@@ -410,6 +484,10 @@ def summarize_long_text(text: str, api_key: str, max_chunk_size: int = 3800, ove
         api_key (str): La chiave API di OpenAI.
         max_chunk_size (int, optional): La dimensione massima di ciascun chunk.
         overlap (int, optional): La dimensione del sovrapporsi tra i chunk.
+        langfuse_tracker (Optional[LangfuseTracker]): Tracker per il monitoraggio LLM.
+        chapter_name (Optional[str]): Nome del capitolo per il tracciamento.
+        lesson_name (Optional[str]): Nome della lezione per il tracciamento.
+        content_type (str): Tipo di contenuto ("vtt", "pdf", "meta_summary").
 
     Returns:
         str: Il riassunto finale del testo.
@@ -424,7 +502,14 @@ def summarize_long_text(text: str, api_key: str, max_chunk_size: int = 3800, ove
 
     if len(chunks) == 1:
         logger.info("Il testo è composto da un singolo chunk. Riassumo direttamente.")
-        summary = summarize_with_openai(chunks[0], api_key)
+        summary = summarize_with_openai(
+            chunks[0], 
+            api_key,
+            langfuse_tracker=langfuse_tracker,
+            chapter_name=chapter_name,
+            lesson_name=lesson_name,
+            content_type=content_type
+        )
         logger.info("Riassunto del singolo chunk completato.")
         return summary
 
@@ -440,7 +525,15 @@ def summarize_long_text(text: str, api_key: str, max_chunk_size: int = 3800, ove
     for i, chunk in enumerate(chunks):
         logger.info(f"Riassumo chunk {i+1}/{len(chunks)}...")
         try:
-            chunk_summary = summarize_with_openai(chunk, api_key, system_prompt_content=SYSTEM_PROMPT_CHUNK)
+            chunk_summary = summarize_with_openai(
+                chunk, 
+                api_key, 
+                system_prompt_content=SYSTEM_PROMPT_CHUNK,
+                langfuse_tracker=langfuse_tracker,
+                chapter_name=chapter_name,
+                lesson_name=lesson_name,
+                content_type=f"{content_type}_chunk_{i+1}"
+            )
             individual_summaries.append(chunk_summary)
             logger.info(f"Riassunto chunk {i+1} completato.")
         except Exception as e:
@@ -465,7 +558,15 @@ def summarize_long_text(text: str, api_key: str, max_chunk_size: int = 3800, ove
         "Utilizza elenchi puntati o numerati, o tabelle, se aiutano a chiarire e strutturare le informazioni. "
         "Evita assolutamente frasi come 'il testo precedente diceva', 'combinando i punti precedenti', o qualsiasi riferimento al processo di sintesi."
     )
-    final_summary = summarize_with_openai(combined_summaries_text, api_key, system_prompt_content=SYSTEM_PROMPT_META_SUMMARY)
+    final_summary = summarize_with_openai(
+        combined_summaries_text, 
+        api_key, 
+        system_prompt_content=SYSTEM_PROMPT_META_SUMMARY,
+        langfuse_tracker=langfuse_tracker,
+        chapter_name=chapter_name,
+        lesson_name=lesson_name,
+        content_type=f"{content_type}_meta_summary"
+    )
     logger.info("Meta-riassunto completato.")
     return final_summary
 
@@ -585,7 +686,14 @@ def find_related_pdf(vtt_file_path: Path, chapter_dir: Path) -> List[Path]:
     
     return [] # Restituisce lista vuota se non trovati o dopo logica di deduplicazione se related_pdfs rimane vuota
 
-def process_lesson(formatter: MarkdownFormatter, vtt_file: Path, chapter_dir: Path, base_output_dir: Path, api_key: str) -> Optional[Path]:
+def process_lesson(
+    formatter: MarkdownFormatter, 
+    vtt_file: Path, 
+    chapter_dir: Path, 
+    base_output_dir: Path, 
+    api_key: str,
+    langfuse_tracker: Optional[LangfuseTracker] = None
+) -> Optional[Path]:
     lesson_name = vtt_file.stem
     sanitized_lesson_name = re.sub(r'[\\\\/:*? \"<>|]', '_', lesson_name)
     lesson_output_filename = f"{sanitized_lesson_name}_summary.md"
@@ -601,7 +709,14 @@ def process_lesson(formatter: MarkdownFormatter, vtt_file: Path, chapter_dir: Pa
         vtt_summary = "" # Inizializza vtt_summary
         if vtt_text.strip():
             logger.info(f"Riassumo il testo VTT per la lezione '{lesson_name}' ({len(vtt_text)} caratteri)...")
-            vtt_summary = summarize_long_text(vtt_text, api_key)
+            vtt_summary = summarize_long_text(
+                vtt_text, 
+                api_key,
+                langfuse_tracker=langfuse_tracker,
+                chapter_name=chapter_name_for_path,
+                lesson_name=lesson_name,
+                content_type="vtt"
+            )
             if vtt_summary:
                 logger.info(f"Riassunto VTT generato per '{lesson_name}': {len(vtt_summary)} caratteri.")
             else:
@@ -631,7 +746,14 @@ def process_lesson(formatter: MarkdownFormatter, vtt_file: Path, chapter_dir: Pa
             combined_pdf_text = "\n\n--- Separatore PDF Interno ---\n\n".join(pdf_texts)
             if combined_pdf_text.strip():
                 logger.info(f"Riassumo il testo PDF combinato per '{lesson_name}' ({len(combined_pdf_text)} caratteri)...")
-                pdf_summary_content = summarize_long_text(combined_pdf_text, api_key)
+                pdf_summary_content = summarize_long_text(
+                    combined_pdf_text, 
+                    api_key,
+                    langfuse_tracker=langfuse_tracker,
+                    chapter_name=chapter_name_for_path,
+                    lesson_name=lesson_name,
+                    content_type="pdf"
+                )
                 if pdf_summary_content:
                     logger.info(f"Riassunto PDF generato per '{lesson_name}': {len(pdf_summary_content)} caratteri.")
                 else:
@@ -657,7 +779,13 @@ def process_lesson(formatter: MarkdownFormatter, vtt_file: Path, chapter_dir: Pa
     
     return None
 
-def process_chapter(formatter: MarkdownFormatter, chapter_dir: Path, base_output_dir: Path, api_key: str) -> List[Optional[Path]]: # Modificata firma
+def process_chapter(
+    formatter: MarkdownFormatter, 
+    chapter_dir: Path, 
+    base_output_dir: Path, 
+    api_key: str,
+    langfuse_tracker: Optional[LangfuseTracker] = None
+) -> List[Optional[Path]]: # Modificata firma
     """
     Processa tutti i file VTT in una directory di capitolo.
     # ... (docstring unchanged) ...
@@ -683,7 +811,14 @@ def process_chapter(formatter: MarkdownFormatter, chapter_dir: Path, base_output
     for vtt_file in vtt_files:
         # Assicurati che process_lesson ritorni un Path o None
         # e che questo venga aggiunto a processed_lesson_files
-        lesson_summary_path = process_lesson(formatter, vtt_file, chapter_dir, base_output_dir, api_key) # Passa formatter
+        lesson_summary_path = process_lesson(
+            formatter, 
+            vtt_file, 
+            chapter_dir, 
+            base_output_dir, 
+            api_key,
+            langfuse_tracker=langfuse_tracker
+        ) # Passa formatter
         if lesson_summary_path:
             processed_lesson_files.append(lesson_summary_path)
         else:
@@ -823,6 +958,9 @@ def main():
     
     load_dotenv() # Carica le variabili d'ambiente dal file .env
     
+    # Inizializza LangfuseTracker
+    langfuse_tracker = LangfuseTracker()
+    
     try:
         # Inizializza il gestore delle chiavi API
         # Specifica il nome della variabile d'ambiente se diverso da OPENAI_API_KEY
@@ -834,6 +972,10 @@ def main():
         # Configura la directory di output
         output_dir = setup_output_directory(args.course_dir, args.output_dir)
         course_name = Path(args.course_dir).name # Nome del corso dalla directory di input
+
+        # Avvia la sessione Langfuse se il tracker è abilitato
+        if langfuse_tracker.is_enabled():
+            langfuse_tracker.start_session(course_name)
 
         # Istanzia il MarkdownFormatter
         formatter = MarkdownFormatter() # NUOVA ISTANZA
@@ -849,7 +991,13 @@ def main():
         for chapter_dir in chapter_dirs:
             # Processa ogni capitolo (lezioni al suo interno)
             # process_chapter ora ritorna una lista di Path ai file di riassunto delle lezioni
-            lesson_summary_files_for_chapter = process_chapter(formatter, chapter_dir, output_dir, openai_api_key) # Passa formatter
+            lesson_summary_files_for_chapter = process_chapter(
+                formatter, 
+                chapter_dir, 
+                output_dir, 
+                openai_api_key,
+                langfuse_tracker=langfuse_tracker # Passa il tracker
+            ) 
             
             # Filtra i None se alcune lezioni non hanno prodotto un output
             valid_lesson_summary_files = [f for f in lesson_summary_files_for_chapter if f is not None]
@@ -881,6 +1029,12 @@ def main():
         logger.error(f"Errore API OpenAI durante l'esecuzione principale: {api_err}")
     except Exception as e:
         logger.error(f"Errore imprevisto durante l'esecuzione principale: {e}", exc_info=True)
+    finally:
+        # Termina la sessione Langfuse e invia i dati
+        if langfuse_tracker.is_enabled():
+            langfuse_tracker.end_session()
+            langfuse_tracker.flush()
+            logger.info("Sessione Langfuse terminata e dati inviati.")
 
 if __name__ == '__main__':
     main()
