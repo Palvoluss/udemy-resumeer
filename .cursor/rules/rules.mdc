@@ -3,9 +3,24 @@ description:
 globs: 
 alwaysApply: true
 ---
-# IMPORTANT:
-# Always read memory-bank/@architecture.md before writing any code. Include entire database schema.
-# Always read memory-bank/@product-requirements.md before writing any code.
-# After adding a major feature or completing a milestone, update memory-bank/@architecture.md
-# Always prefer modularity (multiple files) and discourage a monolith (one giant file) 
-# prefer to use clean code architecture and code human readability
+
+**CRITICAL ANTI-ERROR RULE:** Before writing ANY line of code that calls, modifies, or interacts with another existing module, class, or function (especially those in `src/` or defined in `architecture.md`):
+
+1.  **MANDATORY PREVENTIVE READING:** ALWAYS use the `read_file` tool to read the ENTIRE content of the target module/class source file. Identify the EXACT names of methods, functions, attributes, parameters, and constants you intend to use. DO NOT MAKE ASSUMPTIONS based on common naming conventions.
+2.  **SIGNATURE CONFIRMATION:** Pay utmost attention to method/function signatures (parameter names, types, return values). Ensure your calling code EXACTLY matches the definition.
+3.  **SEARCH IF NECESSARY:** If reading the file does not clarify correct usage or if there are doubts, use `codebase_search` or `grep_search` to find existing usage examples of that method/class within the codebase.
+4.  **NO NAME GUESSING:** Do not invent or guess method or attribute names (e.g., `get_api_key` instead of `get_key`, `get_trace_or_span` or `shutdown` if not explicitly defined and verified). Direct verification via `read_file` is MANDATORY.
+
+## Other Key Rules
+
+*   **Read `memory-bank/@architecture.md`:** ALWAYS before writing any code. Include the entire database schema if relevant.
+*   **Read `memory-bank/@product-requirements.md`:** ALWAYS before writing any code.
+*   **Update `memory-bank/@architecture.md`:** After adding a major feature or completing a milestone.
+*   **Modularity:** ALWAYS prefer modularity (multiple files) and discourage monoliths (one giant file).
+*   **Clean Code:** Prefer Clean Code architecture and code readability.
+*   **User Communication:**
+    *   ALWAYS respond in Italian.
+    *   DO NOT modify code without asking for explicit user confirmation, unless it's a correction of an error introduced by you in the same interaction and you are CERTAIN of the correction.
+    *   Maintain the role of a critical advisor as defined in the initial instructions.
+
+**The primary goal is to produce working and well-integrated code ON THE FIRST TRY, minimizing debugging cycles due to misinterpretation of existing interfaces.** 

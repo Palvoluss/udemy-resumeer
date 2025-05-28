@@ -33,6 +33,7 @@ class LangfuseTracker:
         self.langfuse = None
         self.current_trace = None
         self.current_session_id = None
+        self.current_chapter_span: Optional[Any] = None
         self._initialize_langfuse()
     
     def _initialize_langfuse(self) -> None:
@@ -73,13 +74,14 @@ class LangfuseTracker:
         """
         return self.langfuse is not None
     
-    def start_session(self, course_name: str, session_metadata: Optional[Dict[str, Any]] = None) -> None:
+    def start_session(self, course_name: str, session_metadata: Optional[Dict[str, Any]] = None, prompt_info: Optional[Dict[str, Any]] = None) -> None:
         """
         Inizia una nuova sessione di tracciamento per un corso specifico.
         
         Args:
             course_name (str): Nome del corso da elaborare
             session_metadata (Optional[Dict]): Metadati aggiuntivi per la sessione
+            prompt_info (Optional[Dict]): Informazioni sul prompt utilizzato (es. versione)
         """
         if not self.is_enabled():
             return
@@ -94,6 +96,9 @@ class LangfuseTracker:
         
         if session_metadata:
             metadata.update(session_metadata)
+        
+        if prompt_info:
+            metadata["prompt_info"] = prompt_info
         
         try:
             self.current_trace = self.langfuse.trace(
@@ -115,7 +120,9 @@ class LangfuseTracker:
         content_type: str = "vtt",
         token_usage: Optional[Dict[str, int]] = None,
         latency_ms: Optional[float] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        prompt_info: Optional[Dict[str, Any]] = None,
+        cost_usd: Optional[float] = None
     ) -> None:
         """
         Traccia una chiamata LLM con tutti i metadati rilevanti.
@@ -130,6 +137,8 @@ class LangfuseTracker:
             token_usage (Optional[Dict]): Informazioni sui token utilizzati
             latency_ms (Optional[float]): Latenza della chiamata in millisecondi
             error (Optional[str]): Messaggio di errore se la chiamata è fallita
+            prompt_info (Optional[Dict]): Informazioni sul prompt utilizzato (es. versione)
+            cost_usd (Optional[float]): Costo stimato della chiamata LLM in USD
         """
         if not self.is_enabled() or not self.current_trace:
             return
@@ -153,6 +162,12 @@ class LangfuseTracker:
         
         if latency_ms:
             metadata["latency_ms"] = latency_ms
+        
+        if prompt_info:
+            metadata["prompt_info"] = prompt_info
+            
+        if cost_usd is not None:
+            metadata["cost_usd"] = cost_usd
         
         try:
             generation_name = f"LLM_Summary_{content_type}"
@@ -183,7 +198,8 @@ class LangfuseTracker:
         lessons_processed: int,
         lessons_failed: int,
         total_tokens_used: int,
-        estimated_cost: Optional[float] = None
+        estimated_cost: Optional[float] = None,
+        total_processing_time_s: Optional[float] = None
     ) -> None:
         """
         Traccia le metriche di elaborazione complessive per una sessione.
@@ -193,6 +209,7 @@ class LangfuseTracker:
             lessons_failed (int): Numero di lezioni che hanno fallito l'elaborazione
             total_tokens_used (int): Totale dei token utilizzati nella sessione
             estimated_cost (Optional[float]): Costo stimato della sessione
+            total_processing_time_s (Optional[float]): Tempo totale di elaborazione in secondi
         """
         if not self.is_enabled() or not self.current_trace:
             return
@@ -207,6 +224,9 @@ class LangfuseTracker:
         
         if estimated_cost:
             metrics["estimated_cost_usd"] = estimated_cost
+        
+        if total_processing_time_s is not None:
+            metrics["total_processing_time_s"] = total_processing_time_s
         
         try:
             self.current_trace.score(
@@ -228,6 +248,13 @@ class LangfuseTracker:
         
         try:
             if self.current_trace:
+                if self.current_chapter_span:
+                    self.logger.warning(f"Chiusura forzata dello span del capitolo non terminato durante end_session.")
+                    try:
+                        self.current_chapter_span.end()
+                    except Exception as e_span:
+                        self.logger.error(f"Errore nella chiusura forzata dello span del capitolo: {e_span}")
+                    self.current_chapter_span = None
                 self.logger.info(f"Preparazione per terminare la sessione Langfuse: {self.current_session_id}")
             
             self.current_trace = None
@@ -245,4 +272,64 @@ class LangfuseTracker:
                 self.langfuse.flush()
                 self.logger.debug("Dati Langfuse inviati")
             except Exception as e:
-                self.logger.error(f"Errore nell'invio dei dati Langfuse: {str(e)}") 
+                self.logger.error(f"Errore nell'invio dei dati Langfuse: {str(e)}")
+
+    def start_chapter_span(self, chapter_name: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Inizia uno span per tracciare l'elaborazione di un capitolo.
+
+        Args:
+            chapter_name (str): Nome del capitolo.
+            metadata (Optional[Dict[str, Any]]): Metadati aggiuntivi per lo span del capitolo.
+        """
+        if not self.is_enabled() or not self.current_trace:
+            self.logger.debug("Langfuse non abilitato o nessuna trace attiva, salto start_chapter_span.")
+            return
+
+        if self.current_chapter_span:
+            self.logger.warning(f"Tentativo di avviare un nuovo span per il capitolo '{chapter_name}' mentre uno span è già attivo. Chiudo il precedente.")
+            try:
+                self.current_chapter_span.end()
+            except Exception as e:
+                self.logger.error(f"Errore chiudendo lo span del capitolo precedente: {e}")
+            self.current_chapter_span = None
+
+        try:
+            span_metadata = metadata if metadata else {}
+            span_metadata["chapter_name"] = chapter_name
+            
+            self.current_chapter_span = self.current_trace.span(
+                name=f"Chapter Processing: {chapter_name}",
+                metadata=span_metadata,
+            )
+            self.logger.info(f"Span Langfuse avviato per il capitolo: {chapter_name}")
+        except Exception as e:
+            self.logger.error(f"Errore nell'avvio dello span Langfuse per il capitolo '{chapter_name}': {str(e)}")
+            self.current_chapter_span = None
+
+    def end_chapter_span(self, output: Optional[Dict[str, Any]] = None, status: str = "OK") -> None:
+        """
+        Termina lo span corrente del capitolo.
+
+        Args:
+            output (Optional[Dict[str, Any]]): Output o metriche aggregate per lo span del capitolo.
+            status (str): Stato finale dello span del capitolo (es. "OK", "ERROR").
+        """
+        if not self.current_chapter_span:
+            self.logger.debug("Nessuno span capitolo attivo da terminare.")
+            return
+
+        try:
+            update_args = {}
+            if output:
+                update_args["output"] = output
+            if status == "ERROR":
+                update_args["level"] = "ERROR"
+                update_args["status_message"] = output.get("error_message", "Errore durante l'elaborazione del capitolo") if output else "Errore sconosciuto"
+
+            self.current_chapter_span.end(**update_args)
+            self.logger.info(f"Span Langfuse terminato per il capitolo. Output: {output}")
+        except Exception as e:
+            self.logger.error(f"Errore nella terminazione dello span Langfuse per il capitolo: {str(e)}")
+        finally:
+            self.current_chapter_span = None 

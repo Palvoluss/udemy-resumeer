@@ -35,16 +35,9 @@ Questo documento definisce una roadmap aggiornata per le implementazioni future 
         3. Assicurare che il sistema di riassunto utilizzi questo template.
     **Test**: Verificare che i riassunti siano generati utilizzando il prompt specificato e che sia possibile modificarlo centralmente.
 
-## Fase 2: Miglioramento della Qualità e Struttura dei Contenuti
+## Fase 2: Miglioramento della Qualità, Struttura dei Contenuti e Fonti
 
-### 2.1 Ottimizzazione Struttura File di Capitolo (Contenuto Completo)
-    **Descrizione**: Migliorare i file di riassunto del capitolo per includere il contenuto completo delle lezioni anziché solo link.
-    **Passi di implementazione**:
-        1. Modificare la funzione `create_chapter_summary()` (o equivalente) per incorporare i riassunti completi delle lezioni direttamente nel file del capitolo.
-        2. Assicurare una navigazione chiara all'interno del file di capitolo (es. link interni o un piccolo indice all'inizio del file di capitolo).
-    **Test**: Verificare che il riassunto del capitolo contenga effettivamente il testo completo di tutte le lezioni attraverso un test automatizzato che confronti il contenuto con i file delle singole lezioni (o una verifica manuale accurata).
-
-### 2.2 Implementazione Metriche di Base in Langfuse
+### 2.1 Implementazione Metriche di Base in Langfuse
     **Descrizione**: Configurare Langfuse per monitorare metriche chiave di prestazione, costo e utilizzo.
     **Passi di implementazione**:
         1. Definire e registrare metriche chiave: token utilizzati (per riassunto, per capitolo, per corso), costo stimato (se applicabile), tempo di elaborazione.
@@ -52,14 +45,45 @@ Questo documento definisce una roadmap aggiornata per le implementazioni future 
         3. Creare sessioni di tracciamento distinte per ciascun corso elaborato.
     **Test**: Verificare che le metriche definite vengano correttamente visualizzate nella dashboard Langfuse dopo l'elaborazione di un corso completo.
 
-### 2.3 Meccanismo di Rigenerazione Manuale dei Riassunti
-    **Descrizione**: Implementare la capacità di rigenerare manualmente un riassunto con parametri o prompt modificati, a seguito di una tua valutazione di bassa qualità.
+### 2.2 Estrazione Testo e Descrizione Immagini da File HTML
+    **Descrizione**: Estendere le capacità di elaborazione dei file HTML per includere sia l'estrazione del testo sia l'identificazione e la descrizione del contenuto delle immagini rilevanti presenti nei file.
     **Passi di implementazione**:
-        1. Sviluppare una funzione o interfaccia (es. a riga di comando) che permetta di specificare una lezione o un chunk di testo da rigenerare.
-        2. Permettere l'input di un prompt modificato o di parametri specifici (es. modello, temperatura) per la singola rigenerazione.
-        3. Eseguire la chiamata LLM con i nuovi input e aggiornare o sostituire il riassunto precedente.
-        4. Tracciare questa rigenerazione in Langfuse come un evento separato o correlato alla traccia originale.
-    **Test**: Simulare una valutazione di bassa qualità, utilizzare il meccanismo per rigenerare un riassunto con un nuovo prompt e verificare che il risultato sia aggiornato e la rigenerazione tracciata.
+        1. Identificare e integrare una libreria Python per il parsing di HTML (es. BeautifulSoup).
+        2. Aggiornare la logica di elaborazione dei file per:
+            a. Riconoscere e processare i file `.html`.
+            b. Identificare tag `<img>` ed estrarre gli attributi `src` (e possibilmente `alt` per un contesto iniziale).
+        3. Implementare una funzione specifica per estrarre il contenuto testuale rilevante dai file HTML, escludendo elementi non pertinenti (es. script, style, navigazione, footer).
+        4. Sviluppare un modulo/classe `ImageDescriber` per:
+            a. Accedere/scaricare i dati dell'immagine dall'URL/path estratto.
+            b. Interfacciarsi con un modello LLM multimodale (es. OpenAI GPT-4V o simile, da configurare separatamente) per ottenere una descrizione testuale dell'immagine.
+            c. Gestire errori (es. immagini non accessibili, fallimenti API del modello visivo).
+        5. Integrare le descrizioni delle immagini nel contenuto estratto dal file HTML, posizionandole in modo contestualmente appropriato (es., inserendo un testo come "Contenuto immagine: [descrizione generata dall'IA]").
+        6. Modificare il flusso di lavoro di generazione dei riassunti per includere questo contenuto arricchito (testo + descrizioni immagini).
+        7. Valutare e implementare strategie per gestire il costo e le prestazioni (es. processare solo immagini con attributo `alt` significativo, limitare il numero di immagini per pagina, consentire la disattivazione della funzione).
+        8. Aggiornare il tracciamento Langfuse per includere le chiamate al modello di visione, i relativi costi e le metriche di performance.
+    **Test**: 
+        - Verificare che il sistema processi file HTML, estragga testo e identifichi correttamente i tag immagine e i loro sorgenti.
+        - Verificare che le immagini vengano inviate al modello di visione e che le descrizioni testuali siano generate in modo accurato.
+        - Verificare che le descrizioni delle immagini siano integrate correttamente nel materiale utilizzato per il riassunto.
+        - Testare la gestione degli errori per immagini mancanti o API non disponibili.
+        - Verificare il corretto tracciamento in Langfuse delle operazioni relative alle immagini.
+
+### 2.3 Ottimizzazione Struttura File di Capitolo (Contenuto Completo)
+    **Descrizione**: Migliorare i file di riassunto del capitolo per includere il contenuto completo delle lezioni anziché solo link.
+    **Passi di implementazione**:
+        1. Modificare la funzione `create_chapter_summary()` (o equivalente) per incorporare i riassunti completi delle lezioni direttamente nel file del capitolo.
+        2. Assicurare una navigazione chiara all'interno del file di capitolo (es. link interni o un piccolo indice all'inizio del file di capitolo).
+    **Test**: Verificare che il riassunto del capitolo contenga effettivamente il testo completo di tutte le lezioni attraverso un test automatizzato che confronti il contenuto con i file delle singole lezioni (o una verifica manuale accurata).
+
+### 2.4 Meccanismo di Valutazione e Rigenerazione Manuale dei Riassunti
+    **Descrizione**: Implementare un sistema per valutare manualmente la qualità dei riassunti e la capacità di rigenerarli con parametri o prompt modificati.
+    **Passi di implementazione**:
+        1. Implementare un sistema per la valutazione manuale dei riassunti: Aggiungere un campo `user_score: ` (con un range suggerito, es. 0-100, da definire) nel YAML frontmatter di ogni file di riassunto generato. Questo campo sarà inizialmente vuoto o con un valore placeholder.
+        2. Sviluppare una funzione o interfaccia (es. a riga di comando) che permetta di specificare una lezione o un chunk di testo da rigenerare, basandosi sulla sua valutazione o identificativo.
+        3. Permettere l'input di un prompt modificato o di parametri specifici (es. modello, temperatura) per la singola rigenerazione.
+        4. Eseguire la chiamata LLM con i nuovi input e aggiornare o sostituire il riassunto precedente, preservando (o resettando) lo `user_score`.
+        5. Tracciare questa rigenerazione in Langfuse come un evento separato o correlato alla traccia originale, includendo i parametri di rigenerazione e, se disponibile, lo score precedente e quello nuovo.
+    **Test**: Simulare una valutazione di bassa qualità (inserendo uno score basso nel frontmatter), utilizzare il meccanismo per rigenerare un riassunto con un nuovo prompt e verificare che il risultato sia aggiornato, il frontmatter rifletta la possibilità di un nuovo score, e la rigenerazione sia tracciata.
 
 ## Fase 3: Arricchimento Semantico del Contenuto
 

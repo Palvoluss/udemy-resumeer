@@ -317,13 +317,43 @@
 - **Test**: L'esecuzione dello script con le variabili d'ambiente Langfuse configurate funziona correttamente. È consigliato verificare la dashboard Langfuse per la corretta registrazione delle trace, delle chiamate LLM e dei metadati.
 - **Note**: L'integrazione è opzionale e non invasiva. È fondamentale aggiungere le chiavi `LANGFUSE_SECRET_KEY` e `LANGFUSE_PUBLIC_KEY` al file `.env` per attivare il tracciamento.
 
-## Fase Y: Miglioramenti alla Formattazione Markdown
+**Step 21: Sistema di Template per Prompt (Fase 1.3 del Piano Revisionato)**
+- **Stato**: Completato
+- **Data**: 29 Maggio 2025 (data odierna)
+- **Descrizione**: Implementato un sistema per la gestione centralizzata dei template dei prompt.
+    1.  Creata la classe `PromptManager` nel nuovo file `src/prompt_manager.py`.
+    2.  `PromptManager` include un metodo `get_lesson_prompt()` per recuperare template specifici (inizialmente per "lezione pratico teorica faccia a faccia") e un metodo `format_prompt()` per popolare i template con i dati necessari (es. trascrizione della lezione).
+    3.  Il file `src/resume_generator.py` è stato modificato per:
+        - Importare e istanziare `PromptManager` nella funzione `main`.
+        - Passare l'istanza di `PromptManager` attraverso le funzioni `process_chapter`, `process_lesson`, `summarize_long_text` fino a `summarize_with_openai`.
+        - La funzione `summarize_with_openai` ora utilizza `PromptManager` per ottenere e formattare il prompt da inviare all'API OpenAI, sostituendo la logica di costruzione del prompt precedente.
+    4.  Centralizzata la configurazione del modello OpenAI (`OPENAI_MODEL_NAME`) leggendola da variabili d'ambiente, con un fallback a `"gpt-4o-mini"` in `summarize_with_openai`.
+- **Test**: L'utente ha verificato il funzionamento dell'intero flusso dopo diverse iterazioni di debug relative all'integrazione di `APIKeyManager` e `LangfuseTracker`, e alla corretta impostazione del modello OpenAI. I test hanno confermato che i riassunti vengono generati utilizzando il nuovo sistema di template dei prompt e che il modello specificato (via env var o default) viene utilizzato.
+- **Note**: Questa implementazione migliora la manutenibilità e la flessibilità del sistema di prompting, permettendo una facile modifica e aggiunta di nuovi template in futuro. La centralizzazione del nome del modello OpenAI facilita la configurazione. Diversi cicli di debug sono stati necessari per correggere errori di interfacciamento con i moduli `APIKeyManager` e `LangfuseTracker` e per assicurare l'uso corretto del modello specificato.
 
-### Step 1.3 (Piano Originale): Implementazione di un Formatter Markdown
-- **Stato**: Non iniziato
-- **Descrizione**: Creare una classe o modulo `MarkdownFormatter` per gestire la generazione di elementi Markdown (titoli, liste, link, tabelle, ecc.) in modo programmatico.
-- **Obiettivo**: Centralizzare la logica di formattazione, migliorare la leggibilità del codice che genera Markdown, e facilitare future modifiche allo stile dell'output.
+### Step 22: Implementazione Metriche di Base in Langfuse (Fase 2.1 del Piano Revisionato)
+- **Stato**: Completato
+- **Data**: 30 Maggio 2025
+- **Descrizione**: Estesa l'integrazione di Langfuse per implementare metriche di base e un tracciamento più granulare, come definito nel Passo 2.1 del piano di implementazione.
+    - **Definizione e Registrazione Metriche Chiave**:
+        - `LangfuseTracker` ora supporta il tracciamento di:
+            - Token utilizzati: `prompt_tokens`, `completion_tokens`, `total_tokens` a livello di singola chiamata LLM (`generation`).
+            - Tempo di elaborazione: `latency_ms` per chiamata LLM; tempo di elaborazione aggregato per capitolo e per l'intero corso.
+        - Le informazioni sui token vengono accumulate a livello di lezione, capitolo e corso.
+    - **Tagging in Langfuse**:
+        - La funzione `track_llm_call` in `LangfuseTracker` ora accetta `prompt_info` (un dizionario) per tracciare dettagli sul prompt utilizzato (es. `lesson_type_used`, `model_used`).
+        - La funzione `start_session` in `LangfuseTracker` accetta `prompt_info` per registrare informazioni a livello di sessione/trace.
+    - **Sessioni di Tracciamento Distinte e Span**:
+        - `LangfuseTracker` ora include i metodi `start_chapter_span` e `end_chapter_span` per creare span specifici per ogni capitolo all'interno della trace principale del corso.
+        - Questi span registrano metriche aggregate per il capitolo, come `total_tokens_chapter` e `processing_time_s`.
+    - **Integrazione in `resume_generator.py`**:
+        - Le funzioni `summarize_with_openai`, `summarize_long_text`, `process_lesson`, `process_chapter` e `main` sono state aggiornate per:
+            - Propagare e utilizzare `prompt_info`.
+            - Restituire e accumulare l'utilizzo dei token (`total_tokens`) da ogni chiamata LLM.
+            - Misurare e registrare i tempi di elaborazione per capitoli e per l'intero corso.
+            - Utilizzare `start_chapter_span` e `end_chapter_span` per delimitare l'elaborazione dei capitoli.
+            - La funzione `main` ora chiama `track_processing_metrics` con i totali del corso (lezioni processate/fallite stimate, token totali, tempo totale di elaborazione).
+- **Test**: L'utente ha verificato che le nuove metriche (token aggregati, tempi di elaborazione per capitolo/corso, `prompt_info`) e gli span dei capitoli appaiano correttamente nella dashboard di Langfuse.
+- **Note**: Il calcolo del costo stimato (`estimated_cost`) è stato omesso come da decisione dell'utente, poiché Langfuse già fornisce questa funzionalità. Il conteggio delle `lessons_failed` è una stima e può essere ulteriormente raffinato.
 
 ---
-*Questo file di avanzamento è un esempio e andrebbe aggiornato man mano che il progetto evolve.*
-*Le date sono indicative e servono a dare un'idea della progressione temporale.*
