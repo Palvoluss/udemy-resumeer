@@ -20,7 +20,9 @@ udemy-course-resumeeer/
 │   ├── api_key_manager.py  # Gestisce le chiavi API
 │   ├── markdown_formatter.py # Classe per la formattazione Markdown
 │   ├── prompt_manager.py   # Gestisce i template dei prompt per OpenAI (AGGIUNTO)
-│   └── langfuse_tracker.py # Gestisce il tracciamento con Langfuse (AGGIUNTO)
+│   ├── langfuse_tracker.py # Gestisce il tracciamento con Langfuse (AGGIUNTO)
+│   ├── html_parser.py      # Estrae testo e immagini da file HTML (AGGIUNTO)
+│   └── image_describer.py  # Genera descrizioni per immagini tramite LLM (AGGIUNTO)
 ├── tests/
 │   ├── __init__.py       # Rende 'tests' un package Python
 │   ├── test_api_key_manager.py # Test per APIKeyManager
@@ -42,9 +44,10 @@ udemy-course-resumeeer/
         *   Utilizza `api_key_manager` per ottenere la chiave OpenAI.
         *   Utilizza `prompt_manager` per ottenere il template del prompt corretto.
         *   Utilizza `langfuse_tracker` per avviare una sessione di tracciamento per il corso e span per i capitoli.
-        *   Chiama le funzioni per estrarre testo da file VTT e PDF.
-        *   Utilizza le funzioni di riassunto (che a loro volta chiamano OpenAI con il prompt formattato e tracciano la chiamata con `langfuse_tracker`) per generare i contenuti dei riassunti per VTT e PDF separatamente.
-        *   Utilizza `markdown_formatter` per creare i file di output in formato Markdown (indice principale, riassunti dei capitoli, riassunti delle lezioni con sezioni distinte per VTT e PDF).
+        *   Chiama le funzioni per estrarre testo da file VTT, PDF e HTML (tramite `html_parser`).
+        *   Se vengono trovate immagini in file HTML, utilizza `image_describer` per generare descrizioni testuali.
+        *   Utilizza le funzioni di riassunto (che a loro volta chiamano OpenAI con il prompt formattato e tracciano la chiamata con `langfuse_tracker`) per generare i contenuti dei riassunti per VTT, PDF e HTML (quest'ultimo arricchito dalle descrizioni delle immagini).
+        *   Utilizza `markdown_formatter` per creare i file di output in formato Markdown (indice principale, riassunti dei capitoli, riassunti delle lezioni con sezioni distinte per VTT, PDF e HTML).
         *   Registra metriche aggregate (token, tempi) con `langfuse_tracker` alla fine dell'elaborazione del corso e dei capitoli.
 *   **`api_key_manager.py`**: 
     *   Definisce la classe `APIKeyManager`.
@@ -65,9 +68,20 @@ udemy-course-resumeeer/
     *   Fornisce metodi per:
         *   Avviare e terminare sessioni di tracciamento (`trace`) per l'intera elaborazione del corso, includendo metadati generali e informazioni sui prompt.
         *   Avviare e terminare span specifici per l'elaborazione di ogni capitolo, registrando metriche aggregate del capitolo (token, tempo).
-        *   Tracciare singole chiamate ai modelli LLM (`generation`), registrando input, output, modello utilizzato, token consumati, latenza, eventuali errori, e informazioni sul prompt specifico utilizzato.
+        *   Tracciare singole chiamate ai modelli LLM (`generation`), registrando input, output, modello utilizzato, token consumati, latenza, eventuali errori, e informazioni sul prompt specifico utilizzato (include chiamate per riassunti testuali e descrizioni immagini).
         *   Registrare metriche di valutazione complessive per l'elaborazione del corso (es. numero di lezioni processate, token totali, tempo totale di elaborazione).
     *   Utilizzato estensivamente da `resume_generator.py` per monitorare le prestazioni, i costi (indirettamente, dato che Langfuse li calcola), e il comportamento dell'applicazione durante l'elaborazione dei riassunti.
+*   **`html_parser.py`**: (AGGIUNTO)
+    *   Definisce la funzione `extract_text_and_images_from_html`.
+    *   Utilizza `BeautifulSoup` per analizzare il contenuto HTML.
+    *   Responsabile dell'estrazione del testo pulito (rimuovendo tag non contenutistici come script, style, nav, footer, header, aside) e dell'identificazione dei tag `<img>` con i loro attributi `src` e `alt`.
+    *   Utilizzato da `resume_generator.py` per processare i file HTML trovati nelle lezioni del corso.
+*   **`image_describer.py`**: (AGGIUNTO)
+    *   Definisce la classe `ImageDescriber`.
+    *   Responsabile dell'interfacciamento con modelli LLM multimodali (es. OpenAI GPT-4V) per generare descrizioni testuali di immagini.
+    *   Il metodo `describe_image_url` accetta un URL di immagine e restituisce una descrizione. Include la gestione base della chiave API e degli errori API.
+    *   Contiene un segnaposto per `describe_image_data` per la futura gestione di immagini da dati binari.
+    *   Utilizzato da `resume_generator.py` quando vengono identificate immagini nei file HTML, per arricchire il contenuto testuale prima del riassunto.
 
 ### Flusso di Esecuzione Principale (semplificato)
 
@@ -83,9 +97,14 @@ udemy-course-resumeeer/
     c.  Per ogni lezione:
         i.  Viene estratto il testo dal file VTT.
         ii. Vengono cercati e processati i file PDF correlati, estraendo il loro testo.
-        iii. Il testo VTT viene riassunto usando OpenAI. La chiamata LLM, i metadati (incluso `prompt_info`), i token e la latenza vengono tracciati con `LangfuseTracker`.
-        iv. Se presente, il testo dei PDF viene riassunto usando OpenAI. Anche questa chiamata LLM è tracciata.
-        v.  `MarkdownFormatter` viene usato per scrivere un file `.md` per la lezione.
+        iii.Vengono cercati e processati i file HTML correlati:
+            1.  Il testo viene estratto usando `html_parser`.
+            2.  Le immagini vengono identificate. Per ogni immagine accessibile, `image_describer` genera una descrizione testuale.
+            3.  Le descrizioni delle immagini vengono integrate nel testo HTML estratto.
+        iv. Il testo VTT viene riassunto usando OpenAI. La chiamata LLM, i metadati, i token e la latenza vengono tracciati con `LangfuseTracker`.
+        v.  Se presente, il testo dei PDF viene riassunto usando OpenAI. Anche questa chiamata LLM è tracciata.
+        vi. Se presente, il testo HTML arricchito (con descrizioni immagini) viene riassunto usando OpenAI. Anche questa chiamata è tracciata.
+        vii. `MarkdownFormatter` viene usato per scrivere un file `.md` per la lezione, includendo sezioni per VTT, PDF e HTML.
     d.  Viene creato un file di riepilogo per il capitolo.
     e.  Lo `span` Langfuse per il capitolo viene terminato, registrando metriche aggregate del capitolo.
 8.  Viene creato un file indice principale per il corso.

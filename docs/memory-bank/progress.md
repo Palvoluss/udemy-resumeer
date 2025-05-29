@@ -356,4 +356,31 @@
 - **Test**: L'utente ha verificato che le nuove metriche (token aggregati, tempi di elaborazione per capitolo/corso, `prompt_info`) e gli span dei capitoli appaiano correttamente nella dashboard di Langfuse.
 - **Note**: Il calcolo del costo stimato (`estimated_cost`) è stato omesso come da decisione dell'utente, poiché Langfuse già fornisce questa funzionalità. Il conteggio delle `lessons_failed` è una stima e può essere ulteriormente raffinato.
 
----
+### Step 23: Estrazione Testo e Descrizione Immagini da File HTML (Fase 2.2 del Piano Revisionato)
+- **Stato**: Completato
+- **Data**: 29 Maggio 2025 
+- **Descrizione**: Implementata la capacità di processare file HTML associati alle lezioni, includendo l'estrazione di testo e la descrizione di immagini.
+    1.  Aggiunta la dipendenza `beautifulsoup4` a `requirements.txt`.
+    2.  Creato il modulo `src/html_parser.py` con la funzione `extract_text_and_images_from_html` per estrarre testo pulito e informazioni sui tag `<img>` (src, alt) da contenuto HTML, rimuovendo tag non contenutistici.
+    3.  Creato il modulo `src/image_describer.py` con la classe `ImageDescriber`.
+        - L'`__init__` inizializza un client `OpenAI` e accetta un'istanza di `LangfuseTracker`.
+        - Il metodo `describe_image_url` chiama l'API di OpenAI (modello `gpt-4o`) per generare descrizioni di immagini da URL, con gestione degli errori `openai.APIError`.
+        - Aggiunto tracciamento Langfuse in `describe_image_url` con metadati specifici (`content_type="image_description"`, `image_url`, `original_alt_text`, `chapter_name`, `lesson_name`).
+        - Il metodo `describe_image_data` è definito ma la sua implementazione principale è un TODO.
+    4.  Modificata la funzione `find_related_pdf` in `src/resume_generator.py` rinominandola in `find_related_files` per cercare sia file PDF che HTML, restituendo un dizionario. La regex per il matching del prefisso è stata raffinata.
+    5.  Aggiornata la funzione `process_lesson` in `src/resume_generator.py` per:
+        a.  Utilizzare `find_related_files` per identificare file HTML.
+        b.  Leggere e processare i file HTML usando `extract_text_and_images_from_html`.
+        c.  Gestire gli URL delle immagini: URL assoluti usati direttamente; URL relativi risolti in URI `file:///`; `data:` URI loggati (descrizione TODO).
+        d.  Chiamare `image_describer.describe_image_url()` (API reale, modello `gpt-4o`, dettaglio `high`) per le immagini, passando `chapter_name`, `lesson_name`, `original_alt`. Aggiunto fallback per `image_description`.
+        e.  Integrare le descrizioni delle immagini nel testo estratto dall'HTML.
+        f.  Chiamare `summarize_long_text` per riassumere il testo HTML arricchito (passando `lesson_type_for_prompt`).
+    6.  Modificata la funzione `write_lesson_summary` per accettare `html_summary` e includerlo nel file Markdown della lezione. Corretto `formatter.heading` in `formatter.format_header`.
+    7.  Aggiornato `main` in `resume_generator.py` per inizializzare `course_processing_time_s` a `None`.
+    8.  Risolti vari errori (`SyntaxError`, `AttributeError` per `LangfuseTracker.start_span` rimosso, `NameError` per `lesson_type_for_prompt`, `UnboundLocalError` per `image_description`).
+- **Test**: L'utente ha confermato che la funzionalità principale, inclusa la descrizione delle immagini con `gpt-4o` e il riassunto del contenuto HTML, opera correttamente. Il tracciamento Langfuse per `ImageDescriber` è stato migliorato.
+- **Note**:
+    - Le chiamate API per descrizione immagini e riassunto HTML sono attive e utilizzano il modello `gpt-4o`.
+    - La gestione completa dei `data:` URI e l'ottimizzazione per i `file:///` URI (tramite `describe_image_data`) sono TODO in `ImageDescriber`.
+    - Il parametro `detail` per la descrizione delle immagini è stato impostato a `high`.
+    - Il `max_tokens` per la descrizione delle immagini è stato aumentato a 700.

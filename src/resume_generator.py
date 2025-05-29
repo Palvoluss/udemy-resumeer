@@ -23,6 +23,8 @@ import re # Necessario per find_related_pdf
 from dotenv import load_dotenv # IMPORT AGGIUNTO
 from .markdown_formatter import MarkdownFormatter # NUOVO IMPORT
 from .prompt_manager import PromptManager # NUOVO IMPORT PER PROMPT_MANAGER
+from .html_parser import extract_text_and_images_from_html # NUOVO IMPORT PER HTML
+from .image_describer import ImageDescriber # NUOVO IMPORT PER IMMAGINI
 
 # Configurazione del logger
 logger = logging.getLogger(__name__)
@@ -645,121 +647,138 @@ def summarize_long_text(
             # system_prompt_content va gestito da summarize_with_openai o PromptManager
         )
 
-def write_lesson_summary(formatter: MarkdownFormatter, lesson_title: str, vtt_summary: str, pdf_summary: Optional[str], output_file_path: Path) -> None: # Modificata firma
-    """ 
-    Scrive il riassunto di una lezione in un file Markdown, usando MarkdownFormatter.
-    Include una sezione separata per il riassunto dei PDF, se presente.
-    """
-    logger.info(f"Scrittura del riassunto della lezione '{lesson_title}' in: {output_file_path}")
-    output_file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        content = []
-        content.append(formatter.format_header(lesson_title, level=2))
-        content.append(formatter.new_line())
-        
-        if vtt_summary and vtt_summary.strip():
-            content.append(vtt_summary)
-        else:
-            content.append(formatter.format_italic("Nessun riassunto disponibile per il contenuto video principale."))
-        
-        content.append(formatter.new_line())
-
-        if pdf_summary and pdf_summary.strip():
-            content.append(formatter.new_line()) # Linea vuota prima della regola orizzontale
-            content.append(formatter.horizontal_rule())
-            content.append(formatter.new_line())
-            content.append(formatter.format_header("Approfondimenti dai Materiali PDF", level=3))
-            content.append(formatter.new_line())
-            content.append(pdf_summary)
-        
-        with open(output_file_path, 'w', encoding='utf-8') as f:
-            f.write("\n".join(content))
-        logger.info(f"Riassunto della lezione '{lesson_title}' scritto con successo.")
-    except IOError as e:
-        logger.error(f"Errore di I/O durante la scrittura del file di riassunto della lezione '{output_file_path}': {e}")
-    except Exception as e:
-        logger.error(f"Errore imprevisto durante la scrittura del riassunto della lezione '{lesson_title}': {e}")
-
-def find_related_pdf(vtt_file_path: Path, chapter_dir: Path) -> List[Path]:
-    """
-    Trova i file PDF correlati a un file VTT in base al prefisso numerico del nome del file.
+def write_lesson_summary(formatter: MarkdownFormatter, lesson_title: str, vtt_summary: Optional[str], pdf_summary: Optional[str], html_summary: Optional[str], output_file_path: Path) -> None:
+    """Scrive il riassunto di una lezione su file Markdown, includendo VTT, PDF e HTML.
 
     Args:
-        vtt_file_path (Path): Il percorso del file VTT.
-        chapter_dir (Path): La directory del capitolo che contiene il file VTT e potenziali PDF.
+        formatter: Istanza di MarkdownFormatter.
+        lesson_title: Titolo della lezione.
+        vtt_summary: Testo del riassunto generato dal VTT.
+        pdf_summary: Testo del riassunto generato dai PDF (opzionale).
+        html_summary: Testo del riassunto generato dall'HTML (opzionale).
+        output_file_path: Percorso del file Markdown di output.
+    """
+    try:
+        content_parts = []
+        content_parts.append(formatter.format_header(lesson_title, level=2)) # CORRETTO: heading -> format_header
+        content_parts.append(formatter.new_line())
+
+        if vtt_summary:
+            content_parts.append(formatter.format_header("Riassunto Trascrizione (VTT)", level=3)) # CORRETTO: heading -> format_header
+            content_parts.append(formatter.new_line())
+            content_parts.append(vtt_summary)
+            content_parts.append(formatter.new_line())
+            content_parts.append(formatter.new_line())
+
+        if pdf_summary:
+            content_parts.append(formatter.format_header("Riassunto Documento PDF", level=3)) # CORRETTO: heading -> format_header
+            content_parts.append(formatter.new_line())
+            content_parts.append(pdf_summary)
+            content_parts.append(formatter.new_line())
+            content_parts.append(formatter.new_line())
+
+        if html_summary:
+            content_parts.append(formatter.format_header("Riassunto Contenuto HTML (Testo + Immagini)", level=3)) # CORRETTO: heading -> format_header
+            content_parts.append(formatter.new_line())
+            content_parts.append(html_summary)
+            content_parts.append(formatter.new_line())
+            content_parts.append(formatter.new_line())
+        
+        if not vtt_summary and not pdf_summary and not html_summary:
+            logger.warning(f"Nessun contenuto da scrivere per la lezione: {lesson_title}")
+            content_parts.append("Nessun contenuto disponibile per questa lezione.")
+
+        final_content = "".join(content_parts)
+
+        logger.debug(f"Scrittura del riassunto della lezione '{lesson_title}' in '{output_file_path}'")
+        try:
+            # Assicura che la directory genitore esista
+            output_file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+            with open(output_file_path, 'w', encoding='utf-8') as f: # CORRETTA INDENTAZIONE
+                f.write(final_content)
+            
+            logger.info(f"Riassunto della lezione '{lesson_title}' scritto con successo in '{output_file_path}'.")
+        except IOError as e: # CORRETTA INDENTAZIONE (allineata al try interno)
+            logger.error(f"Errore di I/O durante la scrittura del riassunto della lezione '{lesson_title}' in '{output_file_path}': {e}")
+            raise
+        except Exception as e: # CORRETTA INDENTAZIONE (allineata al try interno)
+            logger.error(f"Errore imprevisto durante la scrittura del riassunto della lezione '{lesson_title}': {e}")
+            raise
+    except Exception as e: # Questo è il try...except esterno a quello per IOError
+        logger.error(f"Errore imprevisto generale durante la scrittura del riassunto della lezione '{lesson_title}': {e}")
+        raise
+
+def find_related_files(vtt_file_path: Path, chapter_dir: Path) -> Dict[str, List[Path]]:
+    """Trova file PDF e HTML correlati a un file VTT in una directory di capitolo.
+
+    Si basa sull'estrazione di un prefisso numerico dal nome del file VTT
+    (es. "01" da "01_Welcome.vtt") e cerca file PDF/HTML che iniziano
+    con lo stesso prefisso.
+
+    Args:
+        vtt_file_path: Percorso del file VTT.
+        chapter_dir: Percorso della directory del capitolo.
 
     Returns:
-        List[Path]: Una lista di percorsi a file PDF corrispondenti.
-                    Restituisce una lista vuota se non vengono trovati PDF corrispondenti
-                    o se il nome del file VTT non ha un prefisso numerico.
+        Un dizionario con chiavi 'pdf' e 'html'. Ogni chiave mappa a una lista
+        di oggetti Path per i file corrispondenti trovati, ordinati.
+        Restituisce liste vuote se non vengono trovati file.
     """
-    logger.debug(f"Ricerca PDF correlati per VTT: '{vtt_file_path.name}' nella directory '{chapter_dir}'.")
-    
-    vtt_filename = vtt_file_path.name
-    
-    # Estrai il prefisso numerico dal nome del file VTT (es. "01" da "01_Welcome.vtt")
-    # Cerca prima cifre all'inizio esatto del nome.
-    match = re.match(r"^(\d+)", vtt_filename)
-    if not match: # Se non trovato, cerca numeri preceduti da qualsiasi carattere non numerico.
-        match = re.match(r"^\D*(\d+)", vtt_filename)
+    logger.debug(f"Ricerca file correlati per: {vtt_file_path.name} in {chapter_dir}")
+    related_files: Dict[str, List[Path]] = {"pdf": [], "html": []}
+    vtt_stem = vtt_file_path.stem # Nome file senza estensione
 
-    if not match:
-        logger.warning(f"Nessun prefisso numerico valido trovato nel nome del file VTT '{vtt_filename}'. Impossibile cercare PDF correlati.")
-        return []
-        
-    numeric_prefix = match.group(1)
-    logger.info(f"Prefisso numerico estratto da '{vtt_filename}': '{numeric_prefix}'.")
+    # Logica per estrarre il prefisso numerico (migliorata)
+    prefix_match = re.match(r"^(\d+)[_.-]?.*?", vtt_stem)
+    if not prefix_match:
+        # Prova a cercare numeri preceduti da testo non numerico, es. "Lecture 01"
+        prefix_match = re.match(r"^[^\d]*(\d+)[_.-]?.*?", vtt_stem, re.IGNORECASE)
     
-    related_pdfs: List[Path] = []
-    if not chapter_dir.exists() or not chapter_dir.is_dir():
-        logger.error(f"La directory del capitolo specificata '{chapter_dir}' non esiste o non è una directory.")
-        return []
+    if not prefix_match:
+        logger.warning(f"Impossibile estrarre un prefisso numerico da '{vtt_stem}'. Impossibile cercare file correlati.")
+        return related_files
 
-    # Pattern per matchare il prefisso all'inizio del nome del file PDF,
-    # seguito da un carattere non alfanumerico o dalla fine del nome del file (per "[prefix].pdf")
-    # Questo aiuta a distinguere "01" da "010" se il prefisso fosse "01".
-    # re.escape(numeric_prefix) è usato per trattare il prefisso letteralmente se contenesse caratteri speciali regex.
-    # (?:[^a-zA-Z0-9]|$) significa: un carattere non alfanumerico OPPURE la fine della stringa.
-    pdf_prefix_pattern = rf"^{re.escape(numeric_prefix)}(?:[^a-zA-Z0-9].*|\.pdf$)"
-    # Alternativa più semplice che matcha se il nome del file PDF inizia con "[prefisso]" seguito da "_", ".", "-", " "
-    # o se è esattamente "[prefisso].pdf"
+    numeric_prefix = prefix_match.group(1)
+    logger.debug(f"Prefisso numerico estratto da VTT '{vtt_stem}': '{numeric_prefix}'")
 
     for item in chapter_dir.iterdir():
-        # Ignora i file nascosti di macOS (che iniziano con ._)
-        if item.is_file() and item.suffix.lower() == '.pdf' and not item.name.startswith('._'):
-            pdf_filename = item.name
-            
-            # Logica di matching migliorata:
-            # 1. Controlla un match esatto del prefisso all'inizio del nome del file PDF,
-            #    assicurandosi che sia seguito da un separatore comune o dalla fine del nome.
-            #    Questo evita che "1" matchi "10_file.pdf".
-            #    Esempi di separatori: "_", "-", ".", " "
-            if re.match(rf"^{re.escape(numeric_prefix)}([\s_.-].*|\.pdf)$", pdf_filename, re.IGNORECASE):
-                logger.info(f"Trovato PDF correlato (match primario): '{pdf_filename}' per il prefisso '{numeric_prefix}'.")
-                related_pdfs.append(item)
-            # 2. Fallback: se il nome del file inizia semplicemente con il prefisso numerico.
-            #    Questo potrebbe essere meno preciso ma cattura casi semplici.
-            #    Ad esempio, se il VTT è "01Video.vtt" e il PDF è "01Material.pdf".
-            elif pdf_filename.startswith(numeric_prefix):
-                # Aggiungiamo un controllo per evitare che "01" matchi "011extra.pdf"
-                # Verifichiamo che il carattere dopo il prefisso non sia una cifra, se presente.
-                if len(pdf_filename) > len(numeric_prefix) and pdf_filename[len(numeric_prefix)].isdigit():
-                    pass # Non è un match valido, es. "01" in "010_file.pdf"
-                else:
-                    logger.info(f"Trovato PDF correlato (match startswith): '{pdf_filename}' per il prefisso '{numeric_prefix}'.")
-                    related_pdfs.append(item)
+        if item.is_file() and not item.name.startswith('._'):
+            item_stem = item.stem
+            item_suffix_lower = item.suffix.lower()
 
-    if not related_pdfs:
-        logger.info(f"Nessun PDF correlato trovato per il prefisso '{numeric_prefix}' nella directory '{chapter_dir}'.")
-    else:
-        # Rimuovi duplicati se la logica di match dovesse aggiungerne (improbabile con la logica attuale ma sicuro)
-        # e ordina i risultati per consistenza.
-        unique_related_pdfs = sorted(list(set(related_pdfs)))
-        logger.info(f"Trovati {len(unique_related_pdfs)} PDF correlati per il prefisso '{numeric_prefix}': {unique_related_pdfs}")
-        return unique_related_pdfs
+            # Logica di corrispondenza per il prefisso
+            # Deve iniziare con il prefisso numerico, seguito opzionalmente da SPAZIO, underscore, punto, trattino o dalla fine del nome
+            # o semplicemente iniziare con il prefispo se il nome del file è solo il prefispo + estensione (es. "01.pdf")
+            if (re.match(rf"^{re.escape(numeric_prefix)}(?:[\s_.-].*|\.\w+$|$)", item_stem, re.IGNORECASE) or # AGGIUNTO \s per lo spazio
+                re.match(rf"^{re.escape(numeric_prefix)}$", item_stem, re.IGNORECASE)):
+
+                # Evita corrispondenze parziali (es. "01" in "010_file.pdf") se non è una corrispondenza esatta del prefispo
+                # Questo controllo è più specifico per quando il nome del file è più lungo del solo prefispo.
+                if len(item_stem) > len(numeric_prefix) and not re.match(rf"^{re.escape(numeric_prefix)}[\s_.-]", item_stem, re.IGNORECASE): # AGGIUNTO \s QUI
+                    # Se il nome del file è più lungo del prefispo ma non inizia con prefispo+separatore (inclusi spazi ora),
+                    # potrebbe essere una corrispondenza parziale (es. 01 vs 010). La saltiamo.
+                    # A meno che item_stem non sia ESATTAMENTE il numeric_prefix (gestito dalla regex sopra).
+                    if item_stem.startswith(numeric_prefix) and not item_stem == numeric_prefix:
+                         logger.debug(f"Possibile corrispondenza parziale skippata (controllo specifico): prefisso '{numeric_prefix}', file '{item.name}'") # MODIFICATO Log
+                         continue # Salta questa potenziale corrispondenza parziale
+
+                if item_suffix_lower == '.pdf':
+                    related_files["pdf"].append(item)
+                    logger.debug(f"Trovato PDF correlato: {item.name}")
+                elif item_suffix_lower == '.html' or item_suffix_lower == '.htm':
+                    related_files["html"].append(item)
+                    logger.debug(f"Trovato HTML correlato: {item.name}")
     
-    return [] # Restituisce lista vuota se non trovati o dopo logica di deduplicazione se related_pdfs rimane vuota
+    related_files["pdf"].sort()
+    related_files["html"].sort()
+    
+    if related_files["pdf"]:
+        logger.info(f"Trovati {len(related_files['pdf'])} file PDF correlati per '{vtt_stem}'.")
+    if related_files["html"]:
+        logger.info(f"Trovati {len(related_files['html'])} file HTML correlati per '{vtt_stem}'.")
+        
+    return related_files
 
 def process_lesson(
     formatter: MarkdownFormatter, 
@@ -824,58 +843,199 @@ def process_lesson(
         vtt_summary = f"Errore imprevisto nell'elaborazione VTT: {e}"
 
     # Gestione PDF correlati
-    related_pdfs = find_related_pdf(vtt_file, chapter_dir)
-    if related_pdfs:
-        logger.info(f"Trovati {len(related_pdfs)} PDF correlati per {vtt_file.name}.")
+    related_files = find_related_files(vtt_file, chapter_dir)
+    pdf_summary_text: Optional[str] = None
+    pdf_tokens_used: Optional[Dict[str, int]] = None
+
+    if related_files["pdf"]:
+        logger.info(f"Trovati {len(related_files['pdf'])} PDF correlati per {vtt_file.name}.")
         pdf_texts_combined = []
-        for pdf_file in related_pdfs:
+        for pdf_file in related_files["pdf"]:
             try:
                 # logger.debug(f"Estrazione testo da PDF: {pdf_file}") # Già loggato da extract_text_from_pdf
-                pdf_text = extract_text_from_pdf(pdf_file)
-                if not pdf_text.strip():
-                    logger.warning(f"Il file PDF {pdf_file.name} non contiene testo estraibile.")
-                    pdf_texts_combined.append(f"Contenuto del PDF '{pdf_file.name}' non disponibile o vuoto.")
+                pdf_text_content = extract_text_from_pdf(pdf_file)
+                if pdf_text_content:
+                    logger.info(f"Estratto testo da PDF '{pdf_file.name}' (lunghezza: {len(pdf_text_content)}).")
+                    pdf_texts_combined.append(pdf_text_content)
                 else:
-                    logger.info(f"Testo PDF estratto da {pdf_file.name} ({len(pdf_text)} caratteri).")
-                    pdf_texts_combined.append(pdf_text)
-            except ValueError as e: # Errore da extract_text_from_pdf
-                logger.error(f"Errore durante l'estrazione del testo PDF per {pdf_file.name}: {e}")
-                pdf_texts_combined.append(f"Errore nell'elaborazione del PDF '{pdf_file.name}': {e}")
-            except Exception as e: # Altri errori
-                logger.error(f"Errore imprevisto durante l'elaborazione PDF {pdf_file.name}: {e}")
-                pdf_texts_combined.append(f"Errore imprevisto nell'elaborazione del PDF '{pdf_file.name}': {e}")
+                    logger.warning(f"Nessun testo estratto da PDF '{pdf_file.name}'.")
+            except Exception as e:
+                logger.error(f"Errore durante l'elaborazione del file PDF '{pdf_file.name}': {e}")
 
         if pdf_texts_combined:
-            full_pdf_text = "\n\n--- Nuovo Documento PDF ---\n\n".join(pdf_texts_combined)
-            logger.info(f"Inizio riassunto PDF combinato per: {lesson_name} (totale {len(full_pdf_text)} caratteri).")
-            pdf_summary, token_usage_pdf = summarize_long_text( # MODIFICATO: cattura token_usage
+            full_pdf_text = "\n\n---\n\n".join(pdf_texts_combined)
+            logger.info(f"Testo PDF combinato per {vtt_file.name} (lunghezza: {len(full_pdf_text)}).")
+            
+            try:
+                pdf_summary_text, pdf_tokens_used = summarize_long_text(
                 text=full_pdf_text, 
                 api_key=api_key,
-                prompt_manager=prompt_manager, # PASSATO prompt_manager
-                langfuse_tracker=langfuse_tracker,
-                chapter_name=chapter_dir.name,
-                lesson_name=lesson_name,
-                content_type="pdf",
-                lesson_type_for_prompt="practical_theoretical_face_to_face" # AGGIUNTO esplicitamente
-            )
-            if token_usage_pdf and token_usage_pdf.get("total_tokens"): # AGGIUNTO: accumula token
-                total_tokens_lesson += token_usage_pdf["total_tokens"]
-            logger.info(f"Riassunto PDF generato per: {lesson_name}")
+                    prompt_manager=prompt_manager,
+                    langfuse_tracker=langfuse_tracker, # Passa il tracker
+                    chapter_name=chapter_dir.name, # Passa il nome del capitolo
+                    lesson_name=lesson_name, # Passa il nome della lezione
+                    content_type="pdf", # Specifica il tipo di contenuto
+                    lesson_type_for_prompt="practical_theoretical_face_to_face" # AGGIUNTO esplicitamente
+                )
+                total_tokens_lesson += sum(pdf_tokens_used.values()) if pdf_tokens_used else 0
+                logger.info(f"Riassunto del testo PDF per '{vtt_file.name}' generato (lunghezza: {len(pdf_summary_text) if pdf_summary_text else 0}).")
+                if pdf_tokens_used:
+                    logger.info(f"Token PDF utilizzati per '{vtt_file.name}': {pdf_tokens_used}")
+            except Exception as e:
+                logger.error(f"Errore durante il riassunto del testo PDF per '{vtt_file.name}': {e}")
+        else:
+            logger.info(f"Nessun testo PDF da riassumere per {vtt_file.name}.")
     else:
-        logger.info(f"Nessun PDF correlato trovato per {vtt_file.name}.")
-        pdf_summary = None # Esplicito che non c'è riassunto PDF
+        logger.info(f"Nessun file PDF correlato trovato per {vtt_file.name}.")
+
+    # Gestione HTML correlati (NUOVA SEZIONE)
+    html_summary_text: Optional[str] = None
+    html_tokens_used: Optional[Dict[str, int]] = None
+    image_describer: Optional[ImageDescriber] = None # Inizializza fuori dal loop se serve una sola istanza
+
+    if related_files["html"]:
+        logger.info(f"Trovati {len(related_files['html'])} file HTML correlati per {vtt_file.name}.")
+        html_contents_for_summarization = []
+
+        for html_file in related_files["html"]:
+            # html_processing_span = None # RIMOSSO
+            # if langfuse_tracker: # RIMOSSO
+            #     html_processing_span = langfuse_tracker.start_span( # RIMOSSO
+            #         name="html_file_processing", # RIMOSSO
+            #         input={"file_name": html_file.name}, # RIMOSSO
+            #         metadata={"lesson_name": lesson_name} # RIMOSSO
+            #     ) # RIMOSSO
+            try:
+                logger.info(f"Processando file HTML: {html_file.name}")
+                with open(html_file, 'r', encoding='utf-8') as f:
+                    html_content_str = f.read()
+                
+                extracted_html_text, images_info = extract_text_and_images_from_html(html_content_str)
+                logger.info(f"Estratto testo da HTML '{html_file.name}' (lunghezza: {len(extracted_html_text)}). Trovate {len(images_info)} immagini.")
+                
+                enriched_html_text = extracted_html_text
+                processed_image_count = 0
+
+                if images_info:
+                    if image_describer is None:
+                        # Passa anche il langfuse_tracker
+                        image_describer = ImageDescriber(api_key=api_key, langfuse_tracker=langfuse_tracker) 
+                    
+                    image_descriptions = []
+                    for img_info in images_info:
+                        img_src = img_info.get('src')
+                        img_alt = img_info.get('alt', '') # Usiamo img_alt per original_alt
+                        if not img_src:
+                            logger.warning(f"Immagine skippata in {html_file.name} per mancanza di src: {img_info}")
+                            continue
+
+                        resolved_image_src = ""
+                        image_source_type = ""
+                        image_description = f"[Descrizione non generata per immagine: {img_src}]" # Default
+
+                        if img_src.startswith("data:"):
+                            logger.info(f"Immagine data URI trovata in {html_file.name}: {img_src[:100]}... TODO: descrivere con describe_image_data")
+                            # TODO: Estrarre i dati base64 e usare image_describer.describe_image_data()
+                            #       passando chapter_name, lesson_name, original_alt=img_alt
+                            image_description = f"[TODO: Descrizione per immagine data URI (alt: '{img_alt}')]"
+                            image_source_type = "data_uri"
+                        elif img_src.startswith("http://") or img_src.startswith("https://"):
+                            resolved_image_src = img_src
+                            image_source_type = "absolute_url"
+                        else: 
+                            try:
+                                absolute_image_path = (html_file.parent / img_src).resolve()
+                                if absolute_image_path.is_file():
+                                    resolved_image_src = absolute_image_path.as_uri()
+                                    image_source_type = "local_file_uri"
+                                else:
+                                    logger.warning(f"Immagine con path relativo '{img_src}' non trovata: {absolute_image_path}")
+                                    image_description = f"[Immagine non trovata localmente: '{img_src}']"
+                                    image_source_type = "relative_path_not_found"
+                            except Exception as e:
+                                logger.error(f"Errore nel risolvere il path relativo dell'immagine '{img_src}' in {html_file.name}: {e}")
+                                image_description = f"[Errore risoluzione path immagine: '{img_src}']"
+                                image_source_type = "relative_path_error"
+                        
+                        if resolved_image_src and image_source_type not in ["data_uri", "relative_path_not_found", "relative_path_error"]:
+                            try:
+                                logger.info(f"Tentativo di descrizione immagine ({image_source_type}): {resolved_image_src} (alt: '{img_alt}')")
+                                image_description = image_describer.describe_image_url(
+                                    resolved_image_src, 
+                                    detail="high",
+                                    chapter_name=chapter_dir.name, # PASSATO chapter_name
+                                    lesson_name=lesson_name,       # PASSATO lesson_name (nome lezione corrente)
+                                    original_alt=img_alt         # PASSATO img_alt
+                                )
+                                logger.info(f"Descrizione immagine generata per {resolved_image_src}: {image_description[:100]}...")
+                            except Exception as e:
+                                logger.error(f"Errore durante la descrizione dell'immagine {resolved_image_src} in {html_file.name}: {e}")
+                                image_description = f"[Errore descrivendo l'immagine: {resolved_image_src}. Dettagli: {e}]"
+                        
+                        image_descriptions.append(f"Contenuto immagine (src originale: {img_src}, alt: {img_alt}): {image_description}")
+                        processed_image_count += 1
+                    
+                    if image_descriptions:
+                        enriched_html_text += "\n\n--- Descrizioni Immagini ---\n" + "\n".join(image_descriptions)
+
+                if enriched_html_text:
+                    html_contents_for_summarization.append(enriched_html_text)
+                
+                # if html_processing_span: # RIMOSSO
+                #     html_processing_span.end(output={"text_length": len(extracted_html_text), "images_found": len(images_info), "images_processed": processed_image_count}) # RIMOSSO
+
+            except Exception as e:
+                logger.error(f"Errore durante l'elaborazione del file HTML '{html_file.name}': {e}")
+                # if html_processing_span: # RIMOSSO
+                #     html_processing_span.end(output={"error": str(e)}, level="ERROR") # RIMOSSO
+        
+        if html_contents_for_summarization:
+            full_html_text_enriched = "\n\n---\n\n".join(html_contents_for_summarization)
+            logger.info(f"Testo HTML arricchito combinato per {vtt_file.name} (lunghezza: {len(full_html_text_enriched)}).")
+            
+            # html_summarization_span = None # RIMOSSO
+            # if langfuse_tracker: # RIMOSSO
+            #     html_summarization_span = langfuse_tracker.start_span( # RIMOSSO
+            #         name="html_content_summarization", # RIMOSSO
+            #         input={"text_length": len(full_html_text_enriched)}, # RIMOSSO
+            #         metadata={"lesson_name": lesson_name, "content_type": "html"} # RIMOSSO
+            #     ) # RIMOSSO
+            try:
+                html_summary_text, html_tokens_used = summarize_long_text(
+                    text=full_html_text_enriched,
+                    api_key=api_key,
+                    prompt_manager=prompt_manager,
+                    langfuse_tracker=langfuse_tracker,
+                    chapter_name=chapter_dir.name,
+                    lesson_name=lesson_name, # Usiamo lesson_name definito all'inizio di process_lesson
+                    content_type="html",
+                    lesson_type_for_prompt="practical_theoretical_face_to_face" # AGGIUNTO esplicitamente
+                )
+
+                total_tokens_lesson += sum(html_tokens_used.values()) if html_tokens_used else 0
+                logger.info(f"Riassunto del testo HTML per '{vtt_file.name}' generato (lunghezza: {len(html_summary_text) if html_summary_text else 0}).")
+                if html_tokens_used:
+                    logger.info(f"Token HTML utilizzati per '{vtt_file.name}': {html_tokens_used}")
+                # if html_summarization_span: # RIMOSSO
+                #     html_summarization_span.end(output={"summary_length": len(html_summary_text if html_summary_text else ""), "tokens": html_tokens_used}) # RIMOSSO
+            except Exception as e:
+                logger.error(f"Errore durante il riassunto del testo HTML per '{vtt_file.name}': {e}")
+                # if html_summarization_span: # RIMOSSO
+                #     html_summarization_span.end(output={"error": str(e)}, level="ERROR") # RIMOSSO
+        else:
+            logger.info(f"Nessun testo HTML da riassumere per {vtt_file.name}.")
+    else:
+        logger.info(f"Nessun file HTML correlato trovato per {vtt_file.name}.")
 
     # Scrittura del riassunto della lezione
-    # Sanitizza il nome del file per la lezione
-    safe_lesson_name = re.sub(r'[\/*?:"<>|]', "", vtt_file.stem) # Rimuove caratteri problematici per i nomi file
-    lesson_output_filename = f"LEZIONE_{safe_lesson_name}.md"
-    lesson_output_file = base_output_dir / chapter_dir.name / lesson_output_filename
+    lesson_output_file_name = f"{vtt_file.stem}_summary.md"
+    lesson_output_file = base_output_dir / chapter_dir.name / lesson_output_file_name
     
     try:
         # Assicura che la directory del capitolo esista nell'output
         (base_output_dir / chapter_dir.name).mkdir(parents=True, exist_ok=True)
         
-        write_lesson_summary(formatter, lesson_name, vtt_summary, pdf_summary, lesson_output_file)
+        write_lesson_summary(formatter, lesson_name, vtt_summary, pdf_summary_text, html_summary_text, lesson_output_file)
         logger.info(f"Riassunto della lezione '{lesson_name}' scritto in: {lesson_output_file}")
         return lesson_output_file, total_tokens_lesson # MODIFICATO RITORNO
     except Exception as e:

@@ -13,6 +13,7 @@ langfuse>=2.0.0
 
 # Dipendenze per il text processing
 nltk>=3.8.0
+beautifulsoup4>=4.12.0
 
 # Dipendenze per vector store (per fasi future)
 faiss-cpu>=1.7.4
