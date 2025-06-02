@@ -103,10 +103,12 @@ udemy-course-resumeeer/
             1.  Il testo viene estratto usando `html_parser`.
             2.  Le immagini vengono identificate. Per ogni immagine accessibile, `image_describer` genera una descrizione testuale.
             3.  Le descrizioni delle immagini vengono integrate nel testo HTML estratto.
-        iv. Il testo VTT viene riassunto usando OpenAI. La chiamata LLM, i metadati, i token e la latenza vengono tracciati con `LangfuseTracker`.
-        v.  Se presente, il testo dei PDF viene riassunto usando OpenAI. Anche questa chiamata LLM è tracciata.
-        vi. Se presente, il testo HTML arricchito (con descrizioni immagini) viene riassunto usando OpenAI. Anche questa chiamata è tracciata.
-        vii. `MarkdownFormatter` viene usato per scrivere un file `.md` per la lezione, includendo sezioni per VTT, PDF e HTML.
+        iv. Vengono identificati e associati i file "orfani" (PDF/HTML non direttamente collegati a un VTT) alla lezione VTT corrente (se è la più vicina precedente).
+        v.  Il testo VTT viene riassunto usando OpenAI. La chiamata LLM, i metadati, i token e la latenza vengono tracciati con `LangfuseTracker`.
+        vi. Se presente, il testo dei PDF viene riassunto usando OpenAI. Anche questa chiamata LLM è tracciata.
+        vii. Se presente, il testo HTML arricchito (con descrizioni immagini) viene riassunto usando OpenAI. Anche questa chiamata è tracciata.
+        viii. Se presenti, i contenuti aggregati dei file orfani associati (testo da PDF, testo e descrizioni immagini da HTML) vengono riassunti usando OpenAI. Anche questa chiamata è tracciata.
+        ix. `MarkdownFormatter` viene usato per scrivere un file `.md` per la lezione, includendo sezioni per VTT, PDF, HTML e una sezione per il materiale aggiuntivo proveniente dai file orfani.
     d.  Viene creato un file di riepilogo per il capitolo.
     e.  Lo `span` Langfuse per il capitolo viene terminato, registrando metriche aggregate del capitolo.
 8.  Viene creato un file indice principale per il corso.

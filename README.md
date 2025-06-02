@@ -74,6 +74,41 @@ python -m src.resume_generator "/percorso/alla/tua/directory/del/corso" -o "/per
 -   `course_dir`: **(Obbligatorio)** Percorso della directory contenente il materiale del corso da processare.
 -   `--output_dir` o `-o`: **(Opzionale)** Percorso della directory dove verranno salvati i riassunti generati.
 
+## Testing
+
+Per eseguire i test unitari del progetto, assicurati di essere nella directory principale del progetto e che l'ambiente virtuale sia attivato.
+
+Esegui il seguente comando:
+
+```bash
+python -m unittest discover tests
+```
+
+Questo comando scoprirà ed eseguirà automaticamente tutti i test presenti nella directory `tests/`.
+
+### Code Coverage
+
+Per generare un report sulla copertura del codice sorgente da parte dei test, puoi utilizzare la libreria `coverage`. Assicurati che sia installata (è inclusa in `requirements.txt` se hai seguito i passaggi di installazione).
+
+1.  **Esegui i test con `coverage`:**
+    ```bash
+    coverage run -m unittest discover tests
+    ```
+
+2.  **Visualizza il report testuale nel terminale:**
+    ```bash
+    coverage report -m
+    ```
+    Questo mostrerà una tabella con la percentuale di copertura per ogni file sorgente e le righe non coperte.
+
+3.  **Genera un report HTML interattivo (opzionale ma consigliato):**
+    ```bash
+    coverage html -d htmlcov
+    ```
+    Questo creerà una directory `htmlcov/` con un report HTML navigabile. Apri il file `htmlcov/index.html` nel tuo browser per esplorare la copertura in dettaglio.
+
+È presente un file `.coveragerc` nella root del progetto che configura `coverage` per escludere i blocchi `if __name__ == '__main__':` dai calcoli di copertura, fornendo una misurazione più accurata.
+
 ## Struttura dell'Output Generato
 
 Dato un corso con la seguente struttura di input:

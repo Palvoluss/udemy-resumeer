@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 import webvtt # type: ignore
 import PyPDF2 # type: ignore
-from typing import List, Optional, Union, Dict, Tuple # Union potrebbe essere necessario per coerenza con altre funzioni, lo lascio per ora
+from typing import List, Optional, Union, Dict, Tuple, Callable # Union potrebbe essere necessario per coerenza con altre funzioni, lo lascio per ora
 from langchain_text_splitters import RecursiveCharacterTextSplitter # type: ignore
 from .api_key_manager import APIKeyManager # IMPORT AGGIUNTO
 from .langfuse_tracker import LangfuseTracker # NUOVO IMPORT
@@ -25,6 +25,8 @@ from .markdown_formatter import MarkdownFormatter # NUOVO IMPORT
 from .prompt_manager import PromptManager # NUOVO IMPORT PER PROMPT_MANAGER
 from .html_parser import extract_text_and_images_from_html # NUOVO IMPORT PER HTML
 from .image_describer import ImageDescriber # NUOVO IMPORT PER IMMAGINI
+import yaml # IMPORT AGGIUNTO
+from datetime import datetime # IMPORT AGGIUNTO
 
 # Configurazione del logger
 logger = logging.getLogger(__name__)
@@ -166,6 +168,115 @@ def list_vtt_files(chapter_dir: Union[str, Path]) -> List[Path]:
     if not vtt_files:
         logger.warning(f"Nessun file VTT trovato nel capitolo '{chapter_path.name}'.")
     return vtt_files
+
+def get_file_prefix(file_path: Path) -> Optional[str]:
+    """
+    Estrae il prefisso numerico dal nome del file.
+    Es. "01_Intro.vtt" -> "01", "Lecture 01 - Topic.pdf" -> "01"
+    """
+    name = file_path.stem # Nome del file senza estensione
+    # Cerca numeri all'inizio del nome del file
+    match = re.match(r"^(\d+)", name)
+    if match:
+        return match.group(1)
+    
+    # Cerca numeri preceduti da caratteri non numerici (es. "Lecture 01")
+    match = re.search(r"\D(\d+)", name)
+    if match:
+        return match.group(1)
+        
+    return None
+
+def identify_orphan_files(chapter_dir: Path, vtt_files: List[Path]) -> List[Path]:
+    """
+    Identifica i file PDF e HTML orfani in una directory di capitolo.
+    Un file è orfano se non ha un file VTT corrispondente con lo stesso prefisso numerico.
+
+    Args:
+        chapter_dir (Path): Percorso della directory del capitolo.
+        vtt_files (List[Path]): Lista dei percorsi dei file VTT nel capitolo.
+
+    Returns:
+        List[Path]: Lista ordinata dei percorsi dei file orfani (PDF e HTML).
+    """
+    logger.debug(f"Identificazione dei file orfani nella directory: {chapter_dir}")
+    orphan_files: List[Path] = []
+    
+    vtt_prefixes = {get_file_prefix(vtt_file) for vtt_file in vtt_files if get_file_prefix(vtt_file) is not None}
+    logger.debug(f"Prefissi VTT trovati: {vtt_prefixes}")
+
+    for item in chapter_dir.iterdir():
+        if item.is_file() and not item.name.startswith('._'):
+            if item.suffix.lower() in ['.pdf', '.html']:
+                file_prefix = get_file_prefix(item)
+                logger.debug(f"Controllo file: {item.name}, prefisso: {file_prefix}")
+                if file_prefix is None or file_prefix not in vtt_prefixes:
+                    logger.info(f"File orfano identificato: {item.name} (prefisso: {file_prefix})")
+                    orphan_files.append(item)
+                # Se ha un prefisso ma questo prefisso non è tra quelli dei VTT, è orfano.
+                # Se non ha un prefisso numerico riconosciuto, è anche considerato orfano 
+                # (potrebbe essere un file generico del capitolo non legato a una lezione specifica).
+                # Questa logica va raffinata se la definizione di orfano è strettamente "non ha VTT *corrispondente*".
+                # Per ora, se non matcha un VTT esistente tramite prefisso, è orfano.
+
+    orphan_files.sort()
+    logger.info(f"Trovati {len(orphan_files)} file orfani (PDF/HTML) nel capitolo '{chapter_dir.name}'.")
+    return orphan_files
+
+def map_orphans_to_lessons(vtt_files: List[Path], orphan_files: List[Path]) -> Dict[Path, List[Path]]:
+    """
+    Associa i file orfani alla lezione VTT valida immediatamente precedente.
+
+    Args:
+        vtt_files (List[Path]): Lista ordinata dei file VTT.
+        orphan_files (List[Path]): Lista ordinata dei file orfani.
+
+    Returns:
+        Dict[Path, List[Path]]: Un dizionario che mappa ogni file VTT
+                                 a una lista dei file orfani ad esso associati.
+    """
+    if not vtt_files:
+        logger.warning("Nessun file VTT fornito per mappare gli orfani. Tutti gli orfani saranno ignorati.")
+        return {}
+
+    # Combina e ordina tutti i file per nome per determinare la precedenza
+    all_files_sorted: List[Tuple[Path, str]] = [] # (path, tipo)
+    for vtt_file in vtt_files:
+        all_files_sorted.append((vtt_file, "vtt"))
+    for orphan_file in orphan_files:
+        all_files_sorted.append((orphan_file, "orphan"))
+    
+    # Ordina per nome del file
+    all_files_sorted.sort(key=lambda x: x[0].name)
+
+    lesson_to_orphans_map: Dict[Path, List[Path]] = {vtt_file: [] for vtt_file in vtt_files}
+    current_vtt_parent: Optional[Path] = None
+
+    logger.debug(f"Mappatura orfani: file ordinati totali: {[f[0].name for f in all_files_sorted]}")
+
+    for file_path, file_type in all_files_sorted:
+        if file_type == "vtt":
+            current_vtt_parent = file_path
+            logger.debug(f"Trovato VTT: {file_path.name}. Impostato come parent corrente.")
+        elif file_type == "orphan":
+            if current_vtt_parent:
+                lesson_to_orphans_map[current_vtt_parent].append(file_path)
+                logger.info(f"File orfano '{file_path.name}' associato alla lezione VTT '{current_vtt_parent.name}'.")
+            else:
+                # Se un orfano appare prima di qualsiasi VTT, lo associamo al primo VTT della lista
+                # Questo è un caso limite, idealmente tali file potrebbero essere gestiti a livello di capitolo
+                # se non come materiale introduttivo alla prima lezione.
+                first_vtt_file = vtt_files[0] # Sappiamo che vtt_files non è vuoto da controllo iniziale
+                lesson_to_orphans_map[first_vtt_file].append(file_path)
+                logger.warning(f"File orfano '{file_path.name}' trovato prima di qualsiasi VTT. Associato alla prima lezione VTT '{first_vtt_file.name}'.")
+
+    for vtt_file, associated_orphans in lesson_to_orphans_map.items():
+        if associated_orphans:
+            logger.debug(f"Lezione '{vtt_file.name}' ha {len(associated_orphans)} file orfani associati: {[o.name for o in associated_orphans]}")
+        else:
+            logger.debug(f"Lezione '{vtt_file.name}' non ha file orfani associati.")
+            
+    return lesson_to_orphans_map
 
 def extract_text_from_vtt(vtt_file_path: Union[str, Path]) -> str:
     """
@@ -647,67 +758,69 @@ def summarize_long_text(
             # system_prompt_content va gestito da summarize_with_openai o PromptManager
         )
 
-def write_lesson_summary(formatter: MarkdownFormatter, lesson_title: str, vtt_summary: Optional[str], pdf_summary: Optional[str], html_summary: Optional[str], output_file_path: Path) -> None:
-    """Scrive il riassunto di una lezione su file Markdown, includendo VTT, PDF e HTML.
+def write_lesson_summary(
+    formatter: MarkdownFormatter, 
+    lesson_title: str, 
+    vtt_summary: Optional[str], 
+    pdf_summary: Optional[str], 
+    html_summary: Optional[str], 
+    orphan_summary: Optional[str], # AGGIUNTO orphan_summary
+    output_file_path: Path,
+    user_score_placeholder: bool = False # AGGIUNTO per step 2.3
+) -> None:
+    """
+    Scrive il riassunto di una lezione (che può includere VTT, PDF, HTML e materiale orfano) 
+    in un file Markdown.
+    Aggiunge un placeholder per user_score nel frontmatter se user_score_placeholder è True.
 
     Args:
-        formatter: Istanza di MarkdownFormatter.
-        lesson_title: Titolo della lezione.
-        vtt_summary: Testo del riassunto generato dal VTT.
-        pdf_summary: Testo del riassunto generato dai PDF (opzionale).
-        html_summary: Testo del riassunto generato dall'HTML (opzionale).
-        output_file_path: Percorso del file Markdown di output.
+        formatter (MarkdownFormatter): Istanza di MarkdownFormatter.
+        lesson_title (str): Titolo della lezione.
+        vtt_summary (Optional[str]): Riassunto del contenuto VTT.
+        pdf_summary (Optional[str]): Riassunto del contenuto PDF.
+        html_summary (Optional[str]): Riassunto del contenuto HTML (arricchito).
+        orphan_summary (Optional[str]): Riassunto del contenuto dei file orfani associati.
+        output_file_path (Path): Percorso del file Markdown di output.
+        user_score_placeholder (bool): Se True, aggiunge "user_score:" al frontmatter.
     """
+    logger.debug(f"Preparazione scrittura riassunto per: {lesson_title} in {output_file_path}")
+
+    # Prepara il frontmatter
+    frontmatter_data = {
+        "title": lesson_title,
+        "source_type": "lesson_summary",
+        "generated_at": datetime.now().isoformat()
+    }
+    if user_score_placeholder:
+        frontmatter_data["user_score"] = "" # Placeholder per valutazione manuale
+
+    frontmatter_str = "---\n"
+    for key, value in frontmatter_data.items():
+        frontmatter_str += f"{key}: {yaml.dump(value, default_flow_style=True).strip()}\n"
+    frontmatter_str += "---\n\n"
+
+    # Utilizza il formatter per creare il contenuto Markdown del corpo della lezione
+    lesson_content = formatter.format_lesson_summary(
+        lesson_title,
+        vtt_summary,
+        pdf_summary,
+        html_summary,
+        orphan_summary # Passa orphan_summary al formatter
+    )
+    
+    full_content = frontmatter_str + lesson_content
+
     try:
-        content_parts = []
-        content_parts.append(formatter.format_header(lesson_title, level=2)) # CORRETTO: heading -> format_header
-        content_parts.append(formatter.new_line())
-
-        if vtt_summary:
-            content_parts.append(formatter.format_header("Riassunto Trascrizione (VTT)", level=3)) # CORRETTO: heading -> format_header
-            content_parts.append(formatter.new_line())
-            content_parts.append(vtt_summary)
-            content_parts.append(formatter.new_line())
-            content_parts.append(formatter.new_line())
-
-        if pdf_summary:
-            content_parts.append(formatter.format_header("Riassunto Documento PDF", level=3)) # CORRETTO: heading -> format_header
-            content_parts.append(formatter.new_line())
-            content_parts.append(pdf_summary)
-            content_parts.append(formatter.new_line())
-            content_parts.append(formatter.new_line())
-
-        if html_summary:
-            content_parts.append(formatter.format_header("Riassunto Contenuto HTML (Testo + Immagini)", level=3)) # CORRETTO: heading -> format_header
-            content_parts.append(formatter.new_line())
-            content_parts.append(html_summary)
-            content_parts.append(formatter.new_line())
-            content_parts.append(formatter.new_line())
-        
-        if not vtt_summary and not pdf_summary and not html_summary:
-            logger.warning(f"Nessun contenuto da scrivere per la lezione: {lesson_title}")
-            content_parts.append("Nessun contenuto disponibile per questa lezione.")
-
-        final_content = "".join(content_parts)
-
-        logger.debug(f"Scrittura del riassunto della lezione '{lesson_title}' in '{output_file_path}'")
-        try:
-            # Assicura che la directory genitore esista
-            output_file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-            with open(output_file_path, 'w', encoding='utf-8') as f: # CORRETTA INDENTAZIONE
-                f.write(final_content)
-            
-            logger.info(f"Riassunto della lezione '{lesson_title}' scritto con successo in '{output_file_path}'.")
-        except IOError as e: # CORRETTA INDENTAZIONE (allineata al try interno)
-            logger.error(f"Errore di I/O durante la scrittura del riassunto della lezione '{lesson_title}' in '{output_file_path}': {e}")
-            raise
-        except Exception as e: # CORRETTA INDENTAZIONE (allineata al try interno)
-            logger.error(f"Errore imprevisto durante la scrittura del riassunto della lezione '{lesson_title}': {e}")
-            raise
-    except Exception as e: # Questo è il try...except esterno a quello per IOError
-        logger.error(f"Errore imprevisto generale durante la scrittura del riassunto della lezione '{lesson_title}': {e}")
-        raise
+        output_file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_file_path, 'w', encoding='utf-8') as f:
+            f.write(full_content)
+        logger.info(f"Riassunto della lezione '{lesson_title}' scritto con successo in '{output_file_path}'")
+    except IOError as e:
+        logger.error(f"Errore di I/O durante la scrittura del file '{output_file_path}': {e}")
+        raise # Rilancia l'eccezione per essere gestita dal chiamante se necessario
+    except Exception as e:
+        logger.error(f"Errore imprevisto durante la scrittura del file '{output_file_path}': {e}")
+        raise # Rilancia l'eccezione
 
 def find_related_files(vtt_file_path: Path, chapter_dir: Path) -> Dict[str, List[Path]]:
     """Trova file PDF e HTML correlati a un file VTT in una directory di capitolo.
@@ -787,260 +900,267 @@ def process_lesson(
     base_output_dir: Path, 
     api_key: str,
     prompt_manager: PromptManager, # AGGIUNTO prompt_manager
-    langfuse_tracker: Optional[LangfuseTracker] = None
+    langfuse_tracker: Optional[LangfuseTracker] = None,
+    image_describer: Optional[ImageDescriber] = None, # AGGIUNTO ImageDescriber
+    associated_orphan_files: Optional[List[Path]] = None # AGGIUNTO per file orfani
 ) -> Tuple[Optional[Path], int]: # MODIFICATO TIPO DI RITORNO
     """
-    Elabora una singola lezione: estrae testo da VTT e PDF, genera riassunti e scrive il file Markdown.
+    Elabora una singola lezione: estrae testo da VTT, PDF correlati, HTML correlati (e orfani associati),
+    genera riassunti e scrive il file Markdown.
 
     Args:
         formatter (MarkdownFormatter): Istanza di MarkdownFormatter.
         vtt_file (Path): Percorso del file VTT della lezione.
-        chapter_dir (Path): Directory del capitolo corrente.
-        base_output_dir (Path): Directory di output base per i riassunti.
+        chapter_dir (Path): Percorso della directory del capitolo.
+        base_output_dir (Path): Directory di output base per il corso.
         api_key (str): Chiave API OpenAI.
-        prompt_manager (PromptManager): Istanza di PromptManager.
-        langfuse_tracker (Optional[LangfuseTracker]): Istanza di LangfuseTracker.
+        prompt_manager (PromptManager): Gestore dei prompt.
+        langfuse_tracker (Optional[LangfuseTracker]): Tracker Langfuse.
+        image_describer (Optional[ImageDescriber]): Istanza di ImageDescriber.
+        associated_orphan_files (Optional[List[Path]]): Lista di file orfani associati a questa lezione.
 
     Returns:
-        Optional[Path]: Percorso del file di riassunto della lezione generato, o None se fallisce.
-        Tuple[Optional[Path], int]: Percorso del file di riassunto e totale token usati per la lezione.
+        Tuple[Optional[Path], int]: Una tupla contenente il percorso del file di riassunto 
+                                     generato (o None se fallisce) e il numero totale di token 
+                                     utilizzati per la lezione.
     """
-    lesson_name = vtt_file.stem.replace('_', ' ').title() # Titolo più leggibile
-    logger.info(f"Inizio elaborazione lezione: {lesson_name} (da {vtt_file.name})")
+    lesson_name = vtt_file.stem
+    chapter_name = chapter_dir.name # Per Langfuse
+    total_tokens_lesson = 0
     
-    vtt_summary = ""
-    pdf_summary: Optional[str] = None # Inizializza pdf_summary come Optional[str]
-    total_tokens_lesson = 0 # Inizializza contatore token per la lezione
+    # Tracciamento Langfuse per la lezione - RIMOSSA CHIAMATA A START_LESSON_SPAN
+    # if langfuse_tracker:
+    #     langfuse_tracker.start_lesson_span(lesson_name, chapter_name)
     
+    start_time_lesson = time.time() # Per Langfuse
+
+    # LOGGING INIZIO ELABORAZIONE LEZIONE
+    logger.info(f"Inizio elaborazione lezione: {lesson_name} nel capitolo {chapter_name}")
+
+    # Estrazione testo da VTT
+    vtt_text_content = ""
+    vtt_summary_text: Optional[str] = None
     try:
-        # Estrazione testo VTT
-        # logger.debug(f"Estrazione testo da VTT: {vtt_file}") # Già loggato da extract_text_from_vtt
-        vtt_text = extract_text_from_vtt(vtt_file)
-        if not vtt_text.strip():
-            logger.warning(f"Il file VTT {vtt_file.name} non contiene testo estraibile. Salto riassunto VTT.")
-            vtt_summary = "Trascrizione VTT non disponibile o vuota."
-        else:
-            logger.info(f"Testo VTT estratto ({len(vtt_text)} caratteri). Inizio riassunto VTT per: {lesson_name}")
-            vtt_summary, token_usage_vtt = summarize_long_text( # MODIFICATO: cattura token_usage
-                text=vtt_text, 
-                api_key=api_key,
-                prompt_manager=prompt_manager, # PASSATO prompt_manager
-                langfuse_tracker=langfuse_tracker,
-                chapter_name=chapter_dir.name,
-                lesson_name=lesson_name,
-                content_type="vtt",
-                lesson_type_for_prompt="practical_theoretical_face_to_face" # AGGIUNTO esplicitamente
+        logger.info(f"Estrazione testo da VTT: {vtt_file.name}")
+        vtt_text_content = extract_text_from_vtt(vtt_file)
+        if vtt_text_content.strip():
+            logger.info(f"Testo estratto da VTT '{vtt_file.name}', lunghezza: {len(vtt_text_content)} caratteri. Inizio riassunto.")
+            summary, usage = summarize_long_text(
+                text=vtt_text_content, 
+                api_key=api_key, 
+                prompt_manager=prompt_manager,
+                langfuse_tracker=langfuse_tracker, 
+                chapter_name=chapter_name, 
+                lesson_name=lesson_name, 
+                content_type="vtt"
             )
-            if token_usage_vtt and token_usage_vtt.get("total_tokens"): # AGGIUNTO: accumula token
-                total_tokens_lesson += token_usage_vtt["total_tokens"]
-            logger.info(f"Riassunto VTT generato per: {lesson_name}")
+            vtt_summary_text = summary
+            if usage and usage.get("total_tokens") is not None:
+                total_tokens_lesson += usage["total_tokens"]
+            logger.info(f"Riassunto VTT generato per '{vtt_file.name}'. Lunghezza: {len(vtt_summary_text) if vtt_summary_text else 'N/A'}")
+        else:
+            logger.info(f"Nessun contenuto testuale estratto da VTT '{vtt_file.name}' o contenuto vuoto.")
+            vtt_summary_text = "Nessun contenuto VTT fornito o contenuto vuoto."
+    except Exception as e:
+        logger.error(f"Errore durante l'elaborazione del file VTT '{vtt_file.name}': {e}")
+        vtt_summary_text = f"Errore durante l'elaborazione del file VTT: {e}"
 
-    except ValueError as e: # Errore da extract_text_from_vtt
-        logger.error(f"Errore durante l'estrazione del testo VTT per {vtt_file.name}: {e}")
-        vtt_summary = f"Errore nell'elaborazione del VTT: {e}"
-    except Exception as e: # Altri errori imprevisti
-        logger.error(f"Errore imprevisto durante l'elaborazione VTT per {vtt_file.name}: {e}")
-        vtt_summary = f"Errore imprevisto nell'elaborazione VTT: {e}"
-
-    # Gestione PDF correlati
+    # Gestione dei file correlati (PDF, HTML) come da implementazione precedente
     related_files = find_related_files(vtt_file, chapter_dir)
+    pdf_files = related_files.get('pdf', [])
+    html_files = related_files.get('html', [])
+
+    # Estrazione e riassunto testo da PDF correlati
     pdf_summary_text: Optional[str] = None
-    pdf_tokens_used: Optional[Dict[str, int]] = None
-
-    if related_files["pdf"]:
-        logger.info(f"Trovati {len(related_files['pdf'])} PDF correlati per {vtt_file.name}.")
-        pdf_texts_combined = []
-        for pdf_file in related_files["pdf"]:
+    if pdf_files:
+        all_pdf_text = ""
+        for pdf_file in pdf_files:
             try:
-                # logger.debug(f"Estrazione testo da PDF: {pdf_file}") # Già loggato da extract_text_from_pdf
-                pdf_text_content = extract_text_from_pdf(pdf_file)
-                if pdf_text_content:
-                    logger.info(f"Estratto testo da PDF '{pdf_file.name}' (lunghezza: {len(pdf_text_content)}).")
-                    pdf_texts_combined.append(pdf_text_content)
+                logger.info(f"Estrazione testo da PDF correlato: {pdf_file.name}")
+                pdf_text = extract_text_from_pdf(pdf_file)
+                if pdf_text.strip():
+                    all_pdf_text += pdf_text + "\n\n" # Aggiungi separatore
+                    logger.info(f"Testo estratto da PDF '{pdf_file.name}', lunghezza: {len(pdf_text)} caratteri.")
                 else:
-                    logger.warning(f"Nessun testo estratto da PDF '{pdf_file.name}'.")
+                    logger.info(f"Nessun contenuto testuale estratto da PDF '{pdf_file.name}' o contenuto vuoto.")
             except Exception as e:
-                logger.error(f"Errore durante l'elaborazione del file PDF '{pdf_file.name}': {e}")
-
-        if pdf_texts_combined:
-            full_pdf_text = "\n\n---\n\n".join(pdf_texts_combined)
-            logger.info(f"Testo PDF combinato per {vtt_file.name} (lunghezza: {len(full_pdf_text)}).")
-            
-            try:
-                pdf_summary_text, pdf_tokens_used = summarize_long_text(
-                text=full_pdf_text, 
-                api_key=api_key,
-                    prompt_manager=prompt_manager,
-                    langfuse_tracker=langfuse_tracker, # Passa il tracker
-                    chapter_name=chapter_dir.name, # Passa il nome del capitolo
-                    lesson_name=lesson_name, # Passa il nome della lezione
-                    content_type="pdf", # Specifica il tipo di contenuto
-                    lesson_type_for_prompt="practical_theoretical_face_to_face" # AGGIUNTO esplicitamente
-                )
-                total_tokens_lesson += sum(pdf_tokens_used.values()) if pdf_tokens_used else 0
-                logger.info(f"Riassunto del testo PDF per '{vtt_file.name}' generato (lunghezza: {len(pdf_summary_text) if pdf_summary_text else 0}).")
-                if pdf_tokens_used:
-                    logger.info(f"Token PDF utilizzati per '{vtt_file.name}': {pdf_tokens_used}")
-            except Exception as e:
-                logger.error(f"Errore durante il riassunto del testo PDF per '{vtt_file.name}': {e}")
-        else:
-            logger.info(f"Nessun testo PDF da riassumere per {vtt_file.name}.")
-    else:
-        logger.info(f"Nessun file PDF correlato trovato per {vtt_file.name}.")
-
-    # Gestione HTML correlati (NUOVA SEZIONE)
-    html_summary_text: Optional[str] = None
-    html_tokens_used: Optional[Dict[str, int]] = None
-    image_describer: Optional[ImageDescriber] = None # Inizializza fuori dal loop se serve una sola istanza
-
-    if related_files["html"]:
-        logger.info(f"Trovati {len(related_files['html'])} file HTML correlati per {vtt_file.name}.")
-        html_contents_for_summarization = []
-
-        for html_file in related_files["html"]:
-            # html_processing_span = None # RIMOSSO
-            # if langfuse_tracker: # RIMOSSO
-            #     html_processing_span = langfuse_tracker.start_span( # RIMOSSO
-            #         name="html_file_processing", # RIMOSSO
-            #         input={"file_name": html_file.name}, # RIMOSSO
-            #         metadata={"lesson_name": lesson_name} # RIMOSSO
-            #     ) # RIMOSSO
-            try:
-                logger.info(f"Processando file HTML: {html_file.name}")
-                with open(html_file, 'r', encoding='utf-8') as f:
-                    html_content_str = f.read()
-                
-                extracted_html_text, images_info = extract_text_and_images_from_html(html_content_str)
-                logger.info(f"Estratto testo da HTML '{html_file.name}' (lunghezza: {len(extracted_html_text)}). Trovate {len(images_info)} immagini.")
-                
-                enriched_html_text = extracted_html_text
-                processed_image_count = 0
-
-                if images_info:
-                    if image_describer is None:
-                        # Passa anche il langfuse_tracker
-                        image_describer = ImageDescriber(api_key=api_key, langfuse_tracker=langfuse_tracker) 
-                    
-                    image_descriptions = []
-                    for img_info in images_info:
-                        img_src = img_info.get('src')
-                        img_alt = img_info.get('alt', '') # Usiamo img_alt per original_alt
-                        if not img_src:
-                            logger.warning(f"Immagine skippata in {html_file.name} per mancanza di src: {img_info}")
-                            continue
-
-                        resolved_image_src = ""
-                        image_source_type = ""
-                        image_description = f"[Descrizione non generata per immagine: {img_src}]" # Default
-
-                        if img_src.startswith("data:"):
-                            logger.info(f"Immagine data URI trovata in {html_file.name}: {img_src[:100]}... TODO: descrivere con describe_image_data")
-                            # TODO: Estrarre i dati base64 e usare image_describer.describe_image_data()
-                            #       passando chapter_name, lesson_name, original_alt=img_alt
-                            image_description = f"[TODO: Descrizione per immagine data URI (alt: '{img_alt}')]"
-                            image_source_type = "data_uri"
-                        elif img_src.startswith("http://") or img_src.startswith("https://"):
-                            resolved_image_src = img_src
-                            image_source_type = "absolute_url"
-                        else: 
-                            try:
-                                absolute_image_path = (html_file.parent / img_src).resolve()
-                                if absolute_image_path.is_file():
-                                    resolved_image_src = absolute_image_path.as_uri()
-                                    image_source_type = "local_file_uri"
-                                else:
-                                    logger.warning(f"Immagine con path relativo '{img_src}' non trovata: {absolute_image_path}")
-                                    image_description = f"[Immagine non trovata localmente: '{img_src}']"
-                                    image_source_type = "relative_path_not_found"
-                            except Exception as e:
-                                logger.error(f"Errore nel risolvere il path relativo dell'immagine '{img_src}' in {html_file.name}: {e}")
-                                image_description = f"[Errore risoluzione path immagine: '{img_src}']"
-                                image_source_type = "relative_path_error"
-                        
-                        if resolved_image_src and image_source_type not in ["data_uri", "relative_path_not_found", "relative_path_error"]:
-                            try:
-                                logger.info(f"Tentativo di descrizione immagine ({image_source_type}): {resolved_image_src} (alt: '{img_alt}')")
-                                image_description = image_describer.describe_image_url(
-                                    resolved_image_src, 
-                                    detail="high",
-                                    chapter_name=chapter_dir.name, # PASSATO chapter_name
-                                    lesson_name=lesson_name,       # PASSATO lesson_name (nome lezione corrente)
-                                    original_alt=img_alt         # PASSATO img_alt
-                                )
-                                logger.info(f"Descrizione immagine generata per {resolved_image_src}: {image_description[:100]}...")
-                            except Exception as e:
-                                logger.error(f"Errore durante la descrizione dell'immagine {resolved_image_src} in {html_file.name}: {e}")
-                                image_description = f"[Errore descrivendo l'immagine: {resolved_image_src}. Dettagli: {e}]"
-                        
-                        image_descriptions.append(f"Contenuto immagine (src originale: {img_src}, alt: {img_alt}): {image_description}")
-                        processed_image_count += 1
-                    
-                    if image_descriptions:
-                        enriched_html_text += "\n\n--- Descrizioni Immagini ---\n" + "\n".join(image_descriptions)
-
-                if enriched_html_text:
-                    html_contents_for_summarization.append(enriched_html_text)
-                
-                # if html_processing_span: # RIMOSSO
-                #     html_processing_span.end(output={"text_length": len(extracted_html_text), "images_found": len(images_info), "images_processed": processed_image_count}) # RIMOSSO
-
-            except Exception as e:
-                logger.error(f"Errore durante l'elaborazione del file HTML '{html_file.name}': {e}")
-                # if html_processing_span: # RIMOSSO
-                #     html_processing_span.end(output={"error": str(e)}, level="ERROR") # RIMOSSO
+                logger.error(f"Errore nell'estrazione del testo dal PDF '{pdf_file.name}': {e}")
+                all_pdf_text += f"Errore durante l'elaborazione del file PDF {pdf_file.name}: {e}\n\n"
         
-        if html_contents_for_summarization:
-            full_html_text_enriched = "\n\n---\n\n".join(html_contents_for_summarization)
-            logger.info(f"Testo HTML arricchito combinato per {vtt_file.name} (lunghezza: {len(full_html_text_enriched)}).")
-            
-            # html_summarization_span = None # RIMOSSO
-            # if langfuse_tracker: # RIMOSSO
-            #     html_summarization_span = langfuse_tracker.start_span( # RIMOSSO
-            #         name="html_content_summarization", # RIMOSSO
-            #         input={"text_length": len(full_html_text_enriched)}, # RIMOSSO
-            #         metadata={"lesson_name": lesson_name, "content_type": "html"} # RIMOSSO
-            #     ) # RIMOSSO
-            try:
-                html_summary_text, html_tokens_used = summarize_long_text(
-                    text=full_html_text_enriched,
-                    api_key=api_key,
-                    prompt_manager=prompt_manager,
-                    langfuse_tracker=langfuse_tracker,
-                    chapter_name=chapter_dir.name,
-                    lesson_name=lesson_name, # Usiamo lesson_name definito all'inizio di process_lesson
-                    content_type="html",
-                    lesson_type_for_prompt="practical_theoretical_face_to_face" # AGGIUNTO esplicitamente
-                )
-
-                total_tokens_lesson += sum(html_tokens_used.values()) if html_tokens_used else 0
-                logger.info(f"Riassunto del testo HTML per '{vtt_file.name}' generato (lunghezza: {len(html_summary_text) if html_summary_text else 0}).")
-                if html_tokens_used:
-                    logger.info(f"Token HTML utilizzati per '{vtt_file.name}': {html_tokens_used}")
-                # if html_summarization_span: # RIMOSSO
-                #     html_summarization_span.end(output={"summary_length": len(html_summary_text if html_summary_text else ""), "tokens": html_tokens_used}) # RIMOSSO
-            except Exception as e:
-                logger.error(f"Errore durante il riassunto del testo HTML per '{vtt_file.name}': {e}")
-                # if html_summarization_span: # RIMOSSO
-                #     html_summarization_span.end(output={"error": str(e)}, level="ERROR") # RIMOSSO
+        if all_pdf_text.strip():
+            logger.info(f"Testo PDF aggregato per la lezione '{lesson_name}'. Inizio riassunto.")
+            summary, usage = summarize_long_text(
+                text=all_pdf_text, 
+                api_key=api_key, 
+                prompt_manager=prompt_manager,
+                langfuse_tracker=langfuse_tracker, 
+                chapter_name=chapter_name, 
+                lesson_name=lesson_name, 
+                content_type="pdf"
+            )
+            pdf_summary_text = summary
+            if usage and usage.get("total_tokens") is not None:
+                total_tokens_lesson += usage["total_tokens"]
+            logger.info(f"Riassunto PDF generato per '{lesson_name}'. Lunghezza: {len(pdf_summary_text) if pdf_summary_text else 'N/A'}")
         else:
-            logger.info(f"Nessun testo HTML da riassumere per {vtt_file.name}.")
-    else:
-        logger.info(f"Nessun file HTML correlato trovato per {vtt_file.name}.")
+            logger.info(f"Nessun contenuto testuale aggregato dai PDF per la lezione '{lesson_name}'.")
+            pdf_summary_text = "Nessun contenuto PDF fornito o contenuto vuoto."
+
+    # Estrazione e riassunto testo da HTML correlati
+    html_summary_text: Optional[str] = None
+    if html_files:
+        all_html_text_enriched = ""
+        for html_file in html_files:
+            try:
+                logger.info(f"Estrazione testo e immagini da HTML correlato: {html_file.name}")
+                text_content, image_urls = extract_text_and_images_from_html(html_file)
+                enriched_html_content = text_content
+                if image_describer and image_urls:
+                    logger.info(f"Trovate {len(image_urls)} immagini in {html_file.name}. Inizio descrizione.")
+                    for img_url in image_urls:
+                        # Assumendo che image_describer.describe_image_url gestisca URL relativi/assoluti
+                        # e che la base per i relativi sia la directory del file HTML
+                        full_image_path = html_file.parent / img_url if not img_url.startswith(('http', '/')) else img_url
+                        desc_text, 비용 = image_describer.describe_image_url(str(full_image_path), lesson_name, chapter_name, html_file.name)
+                        if desc_text:
+                            enriched_html_content += f"\n\nContenuto immagine ({img_url}): {desc_text}"
+                        if 비용 and 비용.get("total_tokens") is not None:
+                             total_tokens_lesson += 비용["total_tokens"]
+                
+                if enriched_html_content.strip():
+                    all_html_text_enriched += enriched_html_content + "\n\n"
+                    logger.info(f"Testo HTML arricchito estratto da '{html_file.name}', lunghezza: {len(enriched_html_content)} caratteri.")
+                else:
+                    logger.info(f"Nessun contenuto testuale/immagine estratto da HTML '{html_file.name}' o contenuto vuoto.")
+
+            except Exception as e:
+                logger.error(f"Errore nell'elaborazione del file HTML '{html_file.name}': {e}")
+                all_html_text_enriched += f"Errore durante l'elaborazione del file HTML {html_file.name}: {e}\n\n"
+        
+        if all_html_text_enriched.strip():
+            logger.info(f"Testo HTML arricchito aggregato per la lezione '{lesson_name}'. Inizio riassunto.")
+            summary, usage = summarize_long_text(
+                text=all_html_text_enriched, 
+                api_key=api_key, 
+                prompt_manager=prompt_manager,
+                langfuse_tracker=langfuse_tracker, 
+                chapter_name=chapter_name, 
+                lesson_name=lesson_name, 
+                content_type="html"
+            )
+            html_summary_text = summary
+            if usage and usage.get("total_tokens") is not None:
+                total_tokens_lesson += usage["total_tokens"]
+            logger.info(f"Riassunto HTML generato per '{lesson_name}'. Lunghezza: {len(html_summary_text) if html_summary_text else 'N/A'}")
+        else:
+            logger.info(f"Nessun contenuto HTML arricchito aggregato per la lezione '{lesson_name}'.")
+            html_summary_text = "Nessun contenuto HTML fornito o contenuto vuoto."
+
+    # NUOVA SEZIONE: Elaborazione file orfani associati
+    orphan_summary_text: Optional[str] = None
+    if associated_orphan_files:
+        logger.info(f"Inizio elaborazione di {len(associated_orphan_files)} file orfani associati a {lesson_name}.")
+        all_orphan_content_text = ""
+        for orphan_file in associated_orphan_files:
+            logger.info(f"Elaborazione file orfano: {orphan_file.name}")
+            try:
+                if orphan_file.suffix.lower() == '.pdf':
+                    text = extract_text_from_pdf(orphan_file)
+                    logger.info(f"Testo estratto da PDF orfano '{orphan_file.name}', lunghezza: {len(text)}.")
+                    all_orphan_content_text += f"Contenuto da {orphan_file.name}:\n{text}\n\n"
+                elif orphan_file.suffix.lower() == '.html':
+                    # CORREZIONE: Leggere il contenuto del file HTML prima di passarlo
+                    with open(orphan_file, 'r', encoding='utf-8') as f_html_orphan:
+                        html_content_str = f_html_orphan.read()
+                    text, image_urls = extract_text_and_images_from_html(html_content_str)
+                    enriched_content = text
+                    if image_describer and image_urls:
+                        logger.info(f"Trovate {len(image_urls)} immagini in HTML orfano {orphan_file.name}. Inizio descrizione.")
+                        for img_url in image_urls:
+                            full_image_path = orphan_file.parent / img_url if not img_url.startswith(('http', '/')) else img_url
+                            desc, usage_img = image_describer.describe_image_url(str(full_image_path), lesson_name, chapter_name, orphan_file.name)
+                            if desc:
+                                enriched_content += f"\n\nContenuto immagine ({img_url}): {desc}"
+                            if usage_img and usage_img.get("total_tokens") is not None:
+                                total_tokens_lesson += usage_img["total_tokens"]
+                    logger.info(f"Testo HTML arricchito da HTML orfano '{orphan_file.name}', lunghezza: {len(enriched_content)}.")
+                    all_orphan_content_text += f"Contenuto da {orphan_file.name}:\n{enriched_content}\n\n"
+            except Exception as e:
+                logger.error(f"Errore durante l'elaborazione del file orfano '{orphan_file.name}': {e}")
+                all_orphan_content_text += f"Errore durante l'elaborazione del file orfano {orphan_file.name}: {e}\n\n"
+        
+        if all_orphan_content_text.strip():
+            logger.info(f"Testo aggregato da file orfani per '{lesson_name}' (lunghezza: {len(all_orphan_content_text)}). Inizio riassunto del materiale aggiuntivo.")
+            summary, usage = summarize_long_text(
+                text=all_orphan_content_text,
+                api_key=api_key,
+                prompt_manager=prompt_manager, # Assumendo che esista un prompt adatto o si usi quello di default
+                langfuse_tracker=langfuse_tracker,
+                chapter_name=chapter_name,
+                lesson_name=lesson_name,
+                content_type="orphan_material" # Nuovo tipo di contenuto per tracciamento
+            )
+            orphan_summary_text = summary
+            if usage and usage.get("total_tokens") is not None:
+                total_tokens_lesson += usage["total_tokens"]
+            logger.info(f"Riassunto del materiale orfano generato per '{lesson_name}'. Lunghezza: {len(orphan_summary_text) if orphan_summary_text else 'N/A'}")
+        else:
+            logger.info(f"Nessun contenuto testuale aggregato dai file orfani per '{lesson_name}'.")
+            # Non impostare orphan_summary_text a un messaggio di errore qui, lascialo None se non c'è contenuto.
 
     # Scrittura del riassunto della lezione
-    lesson_output_file_name = f"{vtt_file.stem}_summary.md"
-    lesson_output_file = base_output_dir / chapter_dir.name / lesson_output_file_name
-    
+    # Determina il percorso di output del file di riassunto della lezione
+    lesson_output_dir = base_output_dir / chapter_dir.name
+    lesson_output_dir.mkdir(parents=True, exist_ok=True)
+    # Sanitize filename from lesson_name (e.g. vtt_file.stem)
+    safe_lesson_name = re.sub(r'[^\w\-. ]', '_', lesson_name) # Sostituisce caratteri non validi
+    output_file_name = f"{safe_lesson_name}.md"
+    output_file_path = lesson_output_dir / output_file_name
+
     try:
-        # Assicura che la directory del capitolo esista nell'output
-        (base_output_dir / chapter_dir.name).mkdir(parents=True, exist_ok=True)
-        
-        write_lesson_summary(formatter, lesson_name, vtt_summary, pdf_summary_text, html_summary_text, lesson_output_file)
-        logger.info(f"Riassunto della lezione '{lesson_name}' scritto in: {lesson_output_file}")
-        return lesson_output_file, total_tokens_lesson # MODIFICATO RITORNO
+        logger.info(f"Scrittura del riassunto della lezione su: {output_file_path}")
+        write_lesson_summary(
+            formatter=formatter,
+            lesson_title=lesson_name, 
+            vtt_summary=vtt_summary_text, 
+            pdf_summary=pdf_summary_text, 
+            html_summary=html_summary_text,
+            orphan_summary=orphan_summary_text, # AGGIUNTO orphan_summary
+            output_file_path=output_file_path,
+            user_score_placeholder=True # Aggiunge placeholder per user_score come da step 2.3
+        )
+        logger.info(f"Riassunto della lezione '{lesson_name}' scritto con successo.")
     except Exception as e:
-        logger.error(f"Errore durante la scrittura del riassunto per {lesson_name}: {e}")
-        return None, total_tokens_lesson # MODIFICATO RITORNO
+        logger.error(f"Errore durante la scrittura del riassunto della lezione '{lesson_name}' su '{output_file_path}': {e}")
+        output_file_path = None # Indica fallimento
+
+    # Fine tracciamento Langfuse per la lezione - RIMOSSA CHIAMATA A END_LESSON_SPAN
+    # Le informazioni sulla lezione sono già tracciate in ogni track_llm_call
+    # e le metriche aggregate per la lezione possono essere calcolate se necessario
+    # al di fuori di uno span specifico di lezione, o aggiunte allo span del capitolo.
+    # if langfuse_tracker:
+    #     lesson_processing_time = time.time() - start_time_lesson
+    #     # Qui potresti voler raccogliere metadati più specifici sulla lezione
+    #     metadata = {
+    #         "vtt_processed": bool(vtt_text_content.strip()),
+    #         "pdf_processed": bool(pdf_files),
+    #         "html_processed": bool(html_files),
+    #         "orphans_processed": len(associated_orphan_files) if associated_orphan_files else 0,
+    #         "vtt_summary_length": len(vtt_summary_text) if vtt_summary_text else 0,
+    #         "pdf_summary_length": len(pdf_summary_text) if pdf_summary_text else 0,
+    #         "html_summary_length": len(html_summary_text) if html_summary_text else 0,
+    #         "orphan_summary_length": len(orphan_summary_text) if orphan_summary_text else 0,
+    #     }
+    #     langfuse_tracker.end_lesson_span(
+    #         output={"summary_file": str(output_file_path) if output_file_path else "Error"},
+    #         metadata=metadata,
+    #         total_tokens_used=total_tokens_lesson,
+    #         processing_time_seconds=lesson_processing_time,
+    #         status="SUCCESS" if output_file_path else "ERROR"
+    #     )
+
+    logger.info(f"Completata elaborazione lezione: {lesson_name}. Token usati: {total_tokens_lesson}")
+    return output_file_path, total_tokens_lesson
 
 def process_chapter(
     formatter: MarkdownFormatter, 
@@ -1051,127 +1171,216 @@ def process_chapter(
     langfuse_tracker: Optional[LangfuseTracker] = None
 ) -> Tuple[List[Optional[Path]], int]: # MODIFICATO TIPO DI RITORNO
     """
-    Elabora tutte le lezioni all'interno di una directory di capitolo.
+    Processa tutti i file VTT e i relativi file PDF/HTML (inclusi gli orfani associati) in una directory di capitolo.
+    Genera riassunti per ogni lezione e li salva in file Markdown.
 
     Args:
         formatter (MarkdownFormatter): Istanza di MarkdownFormatter.
-        chapter_dir (Path): Directory del capitolo da processare.
-        base_output_dir (Path): Directory di output base.
+        chapter_dir (Path): Percorso della directory del capitolo.
+        base_output_dir (Path): Directory di output base per il corso.
         api_key (str): Chiave API OpenAI.
-        prompt_manager (PromptManager): Istanza di PromptManager.
-        langfuse_tracker (Optional[LangfuseTracker]): Istanza di LangfuseTracker.
+        prompt_manager (PromptManager): Gestore dei prompt.
+        langfuse_tracker (Optional[LangfuseTracker]): Tracker Langfuse.
 
     Returns:
-        List[Optional[Path]]: Lista dei percorsi dei file di riassunto delle lezioni generati.
-        Tuple[List[Optional[Path]], int]: Lista dei percorsi dei file e totale token usati per il capitolo.
+        Tuple[List[Optional[Path]], int]: Una tupla contenente la lista dei percorsi dei file 
+                                           Markdown dei riassunti delle lezioni generati e il 
+                                           numero totale di token utilizzati per il capitolo.
     """
     chapter_name = chapter_dir.name
-    logger.info(f"Inizio elaborazione capitolo: {chapter_name}")
-    start_time_chapter = time.time() # Per misurare il tempo di elaborazione del capitolo
-    total_tokens_chapter = 0 # Contatore token per il capitolo
-
-    if langfuse_tracker:
-        langfuse_tracker.start_chapter_span(chapter_name=chapter_name)
-    
+    chapter_output_dir = base_output_dir / chapter_name
     try:
-        vtt_files = list_vtt_files(chapter_dir)
-    except ValueError as e:
-        logger.error(f"Errore nell'elencare i file VTT per il capitolo {chapter_name}: {e}. Capitolo saltato.")
-        if langfuse_tracker:
-            chapter_processing_time = time.time() - start_time_chapter
-            langfuse_tracker.end_chapter_span(output={"error_message": str(e), "total_tokens_chapter": 0, "processing_time_s": chapter_processing_time}, status="ERROR")
-        return [], 0 # Restituisce una lista vuota e 0 token se non si possono elencare i VTT
+        chapter_output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Directory di output del capitolo assicurata: {chapter_output_dir}")
+    except OSError as e:
+        logger.error(f"Errore durante la creazione della directory '{chapter_output_dir}': {e}")
+        # Considerare se propagare l'errore o gestire diversamente
+        return [], 0 
 
+    logger.info(f"Inizio elaborazione capitolo: {chapter_name}")
+    start_time_chapter = time.time() # Per Langfuse
+
+    vtt_files = list_vtt_files(chapter_dir)
     if not vtt_files:
-        logger.warning(f"Nessun file VTT trovato nel capitolo {chapter_name}. Salto elaborazione lezioni.")
-        (base_output_dir / chapter_name).mkdir(parents=True, exist_ok=True)
+        logger.warning(f"Nessun file VTT trovato nel capitolo '{chapter_name}'. Salto elaborazione lezioni.")
+        # Assicurati che la directory del capitolo esista comunque per coerenza, se necessario
+        # (chapter_output_dir.mkdir(parents=True, exist_ok=True) è già sopra)
         if langfuse_tracker:
             chapter_processing_time = time.time() - start_time_chapter
-            langfuse_tracker.end_chapter_span(output={"message": "Nessun file VTT trovato", "total_tokens_chapter": 0, "processing_time_s": chapter_processing_time})
+            # Potresti voler registrare uno span vuoto o con zero metriche se ha senso per il tracciamento
+            # langfuse_tracker.log_chapter_span_metrics(chapter_name, 0, 0, chapter_processing_time)
         return [], 0
+    
+    # Identifica file orfani e mappa alle lezioni VTT
+    orphan_files = identify_orphan_files(chapter_dir, vtt_files)
+    orphans_map = map_orphans_to_lessons(vtt_files, orphan_files)
 
-    lesson_summary_files_paths: List[Optional[Path]] = []
+    lesson_summary_files: List[Optional[Path]] = []
+    total_tokens_chapter = 0
+
+    # Inizializza ImageDescriber se necessario (potrebbe essere fatto una volta per corso)
+    image_describer = ImageDescriber(api_key=api_key, langfuse_tracker=langfuse_tracker) 
+
     for vtt_file in vtt_files:
-        summary_file_path, tokens_lesson = process_lesson( # MODIFICATO: cattura tokens_lesson
-            formatter, 
-            vtt_file, 
-            chapter_dir, 
-            base_output_dir, 
-            api_key,
-            prompt_manager, # PASSATO prompt_manager
-            langfuse_tracker=langfuse_tracker
-        )
-        lesson_summary_files_paths.append(summary_file_path)
-        total_tokens_chapter += tokens_lesson # Accumula token della lezione
-    
-    chapter_processing_time = time.time() - start_time_chapter
-    logger.info(f"Completata elaborazione di {len(vtt_files)} lezioni per il capitolo: {chapter_name} in {chapter_processing_time:.2f}s. Token usati: {total_tokens_chapter}")
-    
-    if langfuse_tracker:
-        langfuse_tracker.end_chapter_span(output={"lessons_processed": len(vtt_files), "total_tokens_chapter": total_tokens_chapter, "processing_time_s": chapter_processing_time})
+        logger.info(f"Inizio elaborazione lezione VTT: {vtt_file.name}")
+        # Recupera i file orfani associati a questo VTT
+        associated_orphan_files = orphans_map.get(vtt_file, [])
+        if associated_orphan_files:
+            logger.info(f"File orfani associati a {vtt_file.name}: {[o.name for o in associated_orphan_files]}")
         
-    return lesson_summary_files_paths, total_tokens_chapter # MODIFICATO RITORNO
+        summary_file_path, tokens_lesson = process_lesson(
+            formatter=formatter,
+            vtt_file=vtt_file,
+            chapter_dir=chapter_dir, # Passato per coerenza, ma find_related_files ora è più mirato
+            base_output_dir=base_output_dir,
+            api_key=api_key,
+            prompt_manager=prompt_manager,
+            langfuse_tracker=langfuse_tracker,
+            image_describer=image_describer, # Passa ImageDescriber
+            associated_orphan_files=associated_orphan_files # Passa i file orfani associati
+        )
+        if summary_file_path:
+            lesson_summary_files.append(summary_file_path)
+        total_tokens_chapter += tokens_lesson
+
+    # Log metriche capitolo per Langfuse
+    if langfuse_tracker:
+        # Calcola il tempo di elaborazione del capitolo
+        chapter_processing_time = time.time() - start_time_chapter
+        langfuse_tracker.log_chapter_span_metrics(
+            chapter_name=chapter_name,
+            total_lessons_processed=len(vtt_files),
+            total_tokens_used=total_tokens_chapter,
+            processing_time_seconds=chapter_processing_time
+        )
+
+    logger.info(f"Completata elaborazione del capitolo: {chapter_name}. File di riassunto generati: {len(lesson_summary_files)}")
+    return lesson_summary_files, total_tokens_chapter
 
 def create_chapter_summary(formatter: MarkdownFormatter, chapter_dir: Path, lesson_summary_files: List[Optional[Path]], base_output_dir: Path) -> Optional[Path]: # Modificata firma
     """
-    Crea un file di riepilogo per il capitolo, usando MarkdownFormatter.
-    # ... (docstring unchanged) ...
+    Crea un file Markdown di riepilogo per un capitolo, incorporando i contenuti delle lezioni.
+
+    Args:
+        formatter (MarkdownFormatter): Istanza del formattatore Markdown.
+        chapter_dir (Path): Percorso della directory del capitolo.
+        lesson_summary_files (List[Optional[Path]]): Lista dei percorsi ai file di riassunto delle lezioni.
+        base_output_dir (Path): Directory di output base per il corso.
+
+    Returns:
+        Optional[Path]: Percorso del file di riepilogo del capitolo creato, o None se fallisce.
     """
     chapter_name = chapter_dir.name
-    # Sanitizza il nome del capitolo per creare un nome di file valido
-    sanitized_chapter_name = re.sub(r'[\\\\/:*?\"<>|]', '_', chapter_name)
-    summary_file_name = f"_CHAPTER_SUMMARY_{sanitized_chapter_name}.md"
-    # Il file di riassunto del capitolo va nella directory principale del corso di output,
-    # o nella directory del capitolo stesso? Il piano originale (1.1.5) suggerisce "capitoli (inizialmente con link)".
-    # `progress.md` Step 15 dice "crea un file di riepilogo per il capitolo".
-    # Lo metto nella directory base_output_dir per ora, per coerenza con l'index principale.
-    # Modifica: lo metto all'interno della cartella del capitolo per una migliore organizzazione.
-    chapter_output_dir = base_output_dir / chapter_name
-    summary_file_path = chapter_output_dir / summary_file_name
+    # Rimuove prefissi numerici comuni come '01-', '01_', '01.', '01 '
+    # per un titolo di capitolo più pulito
+    clean_chapter_name = re.sub(r"^\d+[-_\.\s]*", "", chapter_name)
+    chapter_title = f"Capitolo: {clean_chapter_name}"
+    
+    # Sostituisce gli spazi con underscore e normalizza il nome per il file
+    safe_chapter_name = chapter_name.replace(" ", "_").lower()
+    # Rimuove caratteri non alfanumerici eccetto underscore
+    safe_chapter_name = re.sub(r'[^a-z0-9_]', '', safe_chapter_name)
+    chapter_summary_filename = f"CAPITOLO_{safe_chapter_name}.md"
+    
+    # Il file di riepilogo del capitolo va nella directory del capitolo specifica dentro l'output base
+    chapter_output_dir = base_output_dir / chapter_dir.name # Mantiene la struttura originale
+    chapter_output_dir.mkdir(parents=True, exist_ok=True)
+    chapter_summary_path = chapter_output_dir / chapter_summary_filename
 
-    logger.info(f"Creazione del riassunto per il capitolo '{chapter_name}' in '{summary_file_path}'")
+    logger.info(f"Creazione del riassunto del capitolo: {chapter_summary_path}")
 
-    # Assicura che la directory del capitolo esista (dovrebbe essere già stata creata da process_chapter)
-    summary_file_path.parent.mkdir(parents=True, exist_ok=True)
+    content_parts = []
+    content_parts.append(formatter.format_header(chapter_title, level=1))
+    content_parts.append(formatter.new_line())
 
-    valid_lesson_files = [f for f in lesson_summary_files if f is not None]
+    # Creazione di un piccolo indice per le lezioni
+    if lesson_summary_files:
+        content_parts.append(formatter.format_header("Indice delle Lezioni", level=2))
+        for i, lesson_file_path in enumerate(lesson_summary_files):
+            if lesson_file_path:
+                lesson_title = lesson_file_path.stem # Nome del file senza estensione
+                # Pulisce il titolo della lezione da prefissi numerici e lo usa per l'ancora
+                clean_lesson_title_for_anchor = re.sub(r"^\d+[-_\.\s]*", "", lesson_title).replace(" ", "-").lower()
+                clean_lesson_title_for_display = re.sub(r"^\d+[-_\.\s]*", "", lesson_title)
+                # Sostituisce "SUMMARY_" se presente nel nome del file per il display
+                clean_lesson_title_for_display = clean_lesson_title_for_display.replace("SUMMARY_", "").replace("_", " ")
 
-    if not valid_lesson_files:
-        logger.warning(f"Nessun file di riassunto di lezione valido fornito per il capitolo '{chapter_name}'.")
-        return None
+                content_parts.append(formatter.format_list_item(
+                    formatter.format_link(f"Lezione: {clean_lesson_title_for_display}", f"#{clean_lesson_title_for_anchor}"),
+                    ordered=False
+                ))
+        content_parts.append(formatter.new_line())
+        content_parts.append(formatter.horizontal_rule())
+        content_parts.append(formatter.new_line())
+
+    # Incorpora il contenuto di ogni lezione
+    for lesson_file_path in lesson_summary_files:
+        if lesson_file_path and lesson_file_path.exists():
+            try:
+                with open(lesson_file_path, "r", encoding="utf-8") as f_lesson:
+                    lesson_content = f_lesson.read()
+                
+                # Estrae il titolo dal frontmatter del file lezione per usarlo come H2
+                # e rimuove il frontmatter dal contenuto da includere
+                match = re.search(r"^---\s*$\n(.*?)^---\s*$\n(.*?)$", lesson_content, re.MULTILINE | re.DOTALL)
+                lesson_title_from_frontmatter = chapter_name # Fallback se non trova il titolo
+                actual_lesson_content_to_embed = lesson_content # Fallback
+
+                if match:
+                    frontmatter_str = match.group(1)
+                    actual_lesson_content_to_embed = match.group(2).strip()
+                    # Cerca il titolo nel frontmatter
+                    title_match = re.search(r"^title:\s*(.+)$", frontmatter_str, re.MULTILINE)
+                    if title_match:
+                        lesson_title_from_frontmatter = title_match.group(1).strip()
+                else:
+                    # Se non c'è frontmatter, prova a usare il nome del file come titolo H2
+                    # e includi tutto il contenuto
+                    lesson_title_from_frontmatter = lesson_file_path.stem.replace("SUMMARY_","").replace("_", " ")
+                    lesson_title_from_frontmatter = re.sub(r"^\d+[-_\.\s]*", "", lesson_title_from_frontmatter)
+                
+                # Crea un'ancora per il link dell'indice
+                lesson_anchor = re.sub(r"^\d+[-_\.\s]*", "", lesson_title_from_frontmatter).replace(" ", "-").lower()
+
+                content_parts.append(f'<a id="{lesson_anchor}"></a>') # Aggiunge l'ancora HTML
+                content_parts.append(formatter.new_line())
+                # Includi il contenuto della lezione (senza il suo frontmatter)
+                # Il titolo H1 della lezione originale diventa un H2 nel file capitolo
+                # Se il contenuto inizia con un H1 (es. # Titolo Lezione), lo trasformiamo in H2
+                if actual_lesson_content_to_embed.startswith("# "):
+                    # Rimuove il primo H1 e lo rimpiazza con un H2 formattato dal formatter
+                    # Questo assume che il titolo H1 nel file lezione sia sulla prima riga
+                    lines = actual_lesson_content_to_embed.split('\n', 1)
+                    # Il titolo della lezione viene preso da lesson_title_from_frontmatter
+                    content_parts.append(formatter.format_header(lesson_title_from_frontmatter, level=2))
+                    content_parts.append(formatter.new_line())
+                    if len(lines) > 1:
+                        content_parts.append(lines[1])
+                else:
+                    # Se non inizia con H1, aggiungiamo comunque un H2 con il titolo e poi il contenuto
+                    content_parts.append(formatter.format_header(lesson_title_from_frontmatter, level=2))
+                    content_parts.append(formatter.new_line())
+                    content_parts.append(actual_lesson_content_to_embed)
+                
+                content_parts.append(formatter.new_line())
+                content_parts.append(formatter.horizontal_rule())
+                content_parts.append(formatter.new_line())
+
+            except IOError as e:
+                logger.warning(f"Impossibile leggere il file di riassunto della lezione {lesson_file_path}: {e}")
+        elif lesson_file_path:
+            logger.warning(f"File di riassunto della lezione non trovato: {lesson_file_path}")
+
+    final_content = "".join(content_parts)
 
     try:
-        content = []
-        content.append(formatter.format_header(f"Riepilogo Capitolo: {chapter_name}", level=1))
-        content.append(formatter.new_line())
-        content.append("Questo capitolo include le seguenti lezioni:")
-        content.append(formatter.new_line())
-
-        for lesson_file_path in valid_lesson_files:
-            lesson_name = lesson_file_path.stem.replace('_summary', '')
-            # Crea un link relativo dalla posizione del file di riassunto del capitolo
-            # al file della lezione.
-            # Esempio: _CHAPTER_SUMMARY_NomeCapitolo.md -> NomeLezione_summary.md
-            relative_lesson_path = lesson_file_path.name # Link al file nella stessa directory
-            link = formatter.format_link(lesson_name, relative_lesson_path)
-            content.append(formatter.format_list_item(link))
-        
-        content.append(formatter.new_line())
-        content.append(formatter.horizontal_rule())
-        content.append(formatter.new_line())
-        content.append(f"*Riepilogo generato per il capitolo '{chapter_name}'.*")
-
-        with open(summary_file_path, 'w', encoding='utf-8') as f:
-            f.write("\n".join(content))
-        
-        logger.info(f"File di riassunto del capitolo '{summary_file_path}' creato con successo.")
-        return summary_file_path
+        with open(chapter_summary_path, "w", encoding="utf-8") as f:
+            f.write(final_content)
+        logger.info(f"Riepilogo del capitolo '{chapter_name}' scritto con successo in {chapter_summary_path}")
+        return chapter_summary_path
     except IOError as e:
-        logger.error(f"Errore di I/O durante la scrittura del file di riassunto del capitolo '{summary_file_path}': {e}")
-    except Exception as e:
-        logger.error(f"Errore imprevisto durante la creazione del riassunto del capitolo '{chapter_name}': {e}")
-    
-    return None
+        logger.error(f"Errore durante la scrittura del file di riepilogo del capitolo per '{chapter_name}': {e}")
+        return None
 
 def create_main_index(formatter: MarkdownFormatter, course_name: str, chapter_summary_files: List[Optional[Path]], base_output_dir: Path) -> Optional[Path]: # Modificata firma
     """
@@ -1275,6 +1484,7 @@ def main():
         output_dir = setup_output_directory(args.course_dir, args.output_dir)
         course_name = Path(args.course_dir).name
         start_time_course = time.time() # Per il tempo totale di elaborazione del corso
+        course_processing_time_s = 0.0 # INIZIALIZZAZIONE DI DEFAULT
         total_tokens_course = 0 # Per i token totali del corso
         lessons_processed_course = 0 # Contatore lezioni processate per il corso
         lessons_failed_course = 0 # Contatore lezioni fallite per il corso

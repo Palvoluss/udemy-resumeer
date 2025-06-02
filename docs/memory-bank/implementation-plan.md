@@ -68,22 +68,42 @@ Questo documento definisce una roadmap aggiornata per le implementazioni future 
         - Testare la gestione degli errori per immagini mancanti o API non disponibili.
         - Verificare il corretto tracciamento in Langfuse delle operazioni relative alle immagini.
 
-### 2.3 Ottimizzazione Struttura File di Capitolo (Contenuto Completo)
-    **Descrizione**: Migliorare i file di riassunto del capitolo per includere il contenuto completo delle lezioni anziché solo link.
+### 2.3 Ottimizzazione Struttura File di Capitolo e Valutazione Riassunti
+    **Descrizione**: Migliorare i file di riassunto del capitolo per includere il contenuto completo delle lezioni anziché solo link e implementare un sistema base per la valutazione manuale dei riassunti.
     **Passi di implementazione**:
         1. Modificare la funzione `create_chapter_summary()` (o equivalente) per incorporare i riassunti completi delle lezioni direttamente nel file del capitolo.
         2. Assicurare una navigazione chiara all'interno del file di capitolo (es. link interni o un piccolo indice all'inizio del file di capitolo).
-    **Test**: Verificare che il riassunto del capitolo contenga effettivamente il testo completo di tutte le lezioni attraverso un test automatizzato che confronti il contenuto con i file delle singole lezioni (o una verifica manuale accurata).
+        3. Implementare un sistema per la valutazione manuale dei riassunti: Aggiungere un campo `user_score: ` (con un range suggerito, es. 0-100, da definire) nel YAML frontmatter di ogni file di riassunto generato. Questo campo sarà inizialmente vuoto o con un valore placeholder.
+    **Test**:
+        - Verificare che il riassunto del capitolo contenga effettivamente il testo completo di tutte le lezioni attraverso un test automatizzato che confronti il contenuto con i file delle singole lezioni (o una verifica manuale accurata).
+        - Verificare che il campo `user_score` sia presente nel frontmatter dei file di riassunto.
 
-### 2.4 Meccanismo di Valutazione e Rigenerazione Manuale dei Riassunti
-    **Descrizione**: Implementare un sistema per valutare manualmente la qualità dei riassunti e la capacità di rigenerarli con parametri o prompt modificati.
+### 2.4 Meccanismo di Rigenerazione Manuale dei Riassunti (Funzionalità Rimandata)
+    **Descrizione**: (Rimandato) Implementare un sistema per la capacità di rigenerare i riassunti con parametri o prompt modificati. La valutazione manuale (tramite `user_score`) è gestita nello step 2.3.
     **Passi di implementazione**:
-        1. Implementare un sistema per la valutazione manuale dei riassunti: Aggiungere un campo `user_score: ` (con un range suggerito, es. 0-100, da definire) nel YAML frontmatter di ogni file di riassunto generato. Questo campo sarà inizialmente vuoto o con un valore placeholder.
-        2. Sviluppare una funzione o interfaccia (es. a riga di comando) che permetta di specificare una lezione o un chunk di testo da rigenerare, basandosi sulla sua valutazione o identificativo.
-        3. Permettere l'input di un prompt modificato o di parametri specifici (es. modello, temperatura) per la singola rigenerazione.
-        4. Eseguire la chiamata LLM con i nuovi input e aggiornare o sostituire il riassunto precedente, preservando (o resettando) lo `user_score`.
-        5. Tracciare questa rigenerazione in Langfuse come un evento separato o correlato alla traccia originale, includendo i parametri di rigenerazione e, se disponibile, lo score precedente e quello nuovo.
-    **Test**: Simulare una valutazione di bassa qualità (inserendo uno score basso nel frontmatter), utilizzare il meccanismo per rigenerare un riassunto con un nuovo prompt e verificare che il risultato sia aggiornato, il frontmatter rifletta la possibilità di un nuovo score, e la rigenerazione sia tracciata.
+        *(I seguenti passi sono rimandati e verranno dettagliati quando la funzionalità sarà ripresa)*
+        1. Sviluppare una funzione o interfaccia (es. a riga di comando) che permetta di specificare una lezione o un chunk di testo da rigenerare, basandosi sulla sua valutazione o identificativo.
+        2. Permettere l'input di un prompt modificato o di parametri specifici (es. modello, temperatura) per la singola rigenerazione.
+        3. Eseguire la chiamata LLM con i nuovi input e aggiornare o sostituire il riassunto precedente.
+        4. Tracciare questa rigenerazione in Langfuse come un evento separato o correlato alla traccia originale, includendo i parametri di rigenerazione e, se disponibile, lo score precedente e quello nuovo.
+    **Test**: (Rimandato) Simulare una valutazione di bassa qualità (utilizzando lo `user_score` definito in 2.3), utilizzare il meccanismo (quando implementato) per rigenerare un riassunto con un nuovo prompt e verificare che il risultato sia aggiornato, e la rigenerazione sia tracciata.
+
+### 2.5 Gestione Avanzata dei File di Contenuto Orfani
+    **Descrizione**: Implementare una logica per associare file di contenuto non direttamente collegati a una lezione VTT (es. file HTML, PDF isolati) alla lezione valida immediatamente precedente. Questo assicura che nessun materiale del corso venga ignorato.
+    **Passi di implementazione**:
+        1. Modificare il processo di scansione del corso per identificare i file che non hanno un file `.vtt` corrispondente all'interno della stessa "unità di lezione" (basata sulla numerazione o convenzione dei nomi).
+        2. Implementare una funzione che, per ogni file "orfano" identificato, cerchi a ritroso la lezione precedente che possiede un file `.vtt` (la "lezione genitore valida").
+        3. Estrarre il contenuto rilevante dai file orfani (testo da PDF, testo e descrizione immagini da HTML come definito nello step 2.2).
+        4. Integrare il contenuto estratto dai file orfani nel materiale della "lezione genitore valida" identificata. Questo contenuto dovrebbe essere aggiunto in modo chiaro, ad esempio in una sezione "Materiale Aggiuntivo" o "Approfondimenti" alla fine del riassunto della lezione genitore.
+        5. Gestire correttamente casi di file orfani multipli consecutivi: tutti devono essere associati alla stessa lezione genitore valida più vicina.
+        6. Aggiornare i template Markdown e la logica di `MarkdownFormatter` per presentare questo contenuto aggiuntivo in modo leggibile.
+        7. Assicurare che il tracciamento Langfuse rifletta l'elaborazione di questi file orfani e la loro associazione.
+    **Test**:
+        - Preparare una struttura di corso d'esempio con file `.vtt` e file orfani (`.html`, `.pdf`) singoli e consecutivi.
+        - Verificare che i file orfani vengano correttamente identificati.
+        - Verificare che il contenuto dei file orfani sia estratto e aggiunto al riassunto della lezione precedente corretta.
+        - Controllare che la formattazione del contenuto aggiunto sia chiara e ben integrata.
+        - Verificare che il processo gestisca correttamente più file orfani consecutivi, aggregandoli alla lezione genitore corretta.
 
 ## Fase 3: Arricchimento Semantico del Contenuto
 

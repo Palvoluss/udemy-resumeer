@@ -398,3 +398,56 @@
     7.  **Aggiornamento Documentazione Architettura**: Il file `docs/memory-bank/architecture.md` è stato aggiornato per includere una sezione dedicata all'approccio ai test e per riflettere l'uso di `respx`.
 - **Test**: Tutti i test unitari esistenti (57 test) passano correttamente (`OK (skipped=3)`).
 - **Note**: La copertura totale del codice sorgente (`src/`) è salita al 25%. Il lavoro sull'aumento della copertura per `src/resume_generator.py` (attualmente al 13%) è stato messo in pausa dopo la creazione della documentazione sui test. La strategia di mocking con `respx` si è dimostrata efficace e dovrebbe essere considerata lo standard per testare future interazioni HTTP.
+
+### Step 25: Ottimizzazione Struttura File di Capitolo e Valutazione Riassunti (Fase 2.3 del Piano Revisionato)
+- **Stato**: Completato
+- **Data**: 02 Agosto 2024 (data odierna)
+- **Descrizione**: Migliorati i file di riassunto del capitolo e implementato un sistema base per la valutazione manuale dei riassunti, come definito nello Step 2.3 del piano di implementazione revisionato.
+    1.  **Modifiche a `src/markdown_formatter.py`**:
+        - Aggiunto un nuovo metodo `format_frontmatter(data: dict) -> str` alla classe `MarkdownFormatter` per generare blocchi YAML frontmatter. Questo metodo gestisce correttamente la formattazione, inclusa l'omissione di spazi extra per valori vuoti (es. `score:` invece di `score: `).
+    2.  **Modifiche a `src/resume_generator.py` - Funzione `write_lesson_summary`**:
+        - La funzione è stata aggiornata per utilizzare `formatter.format_frontmatter()` per aggiungere un blocco YAML all'inizio di ogni file di riassunto di lezione.
+        - Il frontmatter include un campo `score: ""` (inizialmente una stringa vuota) per la valutazione manuale da parte dell'utente, come da ultime specifiche.
+        - Il campo `title` è stato rimosso dal frontmatter, poiché il titolo della lezione è già presente come intestazione H1 nel corpo del file Markdown.
+    3.  **Modifiche a `src/resume_generator.py` - Funzione `create_chapter_summary`**:
+        - La funzione è stata significativamente rivista per incorporare i riassunti completi delle lezioni direttamente nel file Markdown del capitolo, invece di contenere solo link.
+        - Viene letto il contenuto di ciascun file di riassunto di lezione.
+        - Il frontmatter dei file di lezione viene rimosso prima di includere il contenuto nel file del capitolo.
+        - Il titolo della lezione (estratto dal frontmatter del file lezione o, in fallback, dal nome del file) viene usato come intestazione H2 all'interno del file del capitolo.
+        - È stato aggiunto un piccolo indice navigabile all'inizio del file di capitolo. Questo indice contiene link interni (ancore HTML) che puntano all'inizio di ciascuna sezione di lezione incorporata, facilitando la navigazione all'interno del file di capitolo.
+        - Migliorata la gestione dei nomi dei file di capitolo e dei titoli per una maggiore pulizia e coerenza.
+- **Test**: L'utente ha verificato manualmente la corretta formattazione del frontmatter nei file di lezione (con il campo `score:` senza spazi aggiuntivi per valori vuoti) e la nuova struttura dei file di capitolo, confermando che i contenuti delle lezioni sono incorporati correttamente e che l'indice interno funziona come previsto. I test unitari (`python -m unittest discover tests`) sono stati eseguiti con successo dopo le modifiche, confermando l'assenza di regressioni.
+- **Note**: Queste modifiche completano i requisiti dello Step 2.3. L'utente ha validato il risultato. Il sistema è ora pronto per la successiva fase di sviluppo (Step 2.5: Gestione Avanzata dei File di Contenuto Orfani) dopo questa validazione.
+
+### Step 26: Gestione Avanzata dei File di Contenuto Orfani (Fase 2.5 del Piano Revisionato)
+- **Stato**: Completato
+- **Data**: 02 Giugno 2024 (data odierna)
+- **Descrizione**: Implementata la logica per identificare, associare ed elaborare file di contenuto orfani (PDF e HTML) all'interno dei capitoli del corso.
+    1.  **Identificazione File Orfani**:
+        - Aggiunta la funzione `get_file_prefix(file_path: Path) -> Optional[str]` in `src/resume_generator.py` per estrarre in modo robusto prefissi numerici dai nomi dei file.
+        - Implementata la funzione `identify_orphan_files(chapter_dir: Path, vtt_files: List[Path]) -> List[Path]` in `src/resume_generator.py`. Questa funzione scansiona una directory di capitolo, confronta i prefissi dei file PDF/HTML con quelli dei file VTT e identifica i file che non hanno una corrispondenza VTT diretta come "orfani".
+    2.  **Associazione File Orfani**:
+        - Creata la funzione `map_orphans_to_lessons(vtt_files: List[Path], orphan_files: List[Path]) -> Dict[Path, List[Path]]` in `src/resume_generator.py`. Questa funzione ordina tutti i file (VTT e orfani) per nome e associa ciascun file orfano alla lezione VTT valida immediatamente precedente. Se un orfano precede tutti i VTT, viene associato al primo VTT.
+    3.  **Integrazione nel Flusso di Elaborazione**:
+        - La funzione `process_chapter` in `src/resume_generator.py` è stata modificata per chiamare `identify_orphan_files` e `map_orphans_to_lessons`.
+        - La funzione `process_lesson` in `src/resume_generator.py` è stata aggiornata per:
+            - Accettare un nuovo parametro `associated_orphan_files: Optional[List[Path]]`.
+            - Iterare su questi file orfani.
+            - Estrarre testo da PDF orfani usando `extract_text_from_pdf`.
+            - Estrarre testo e descrivere immagini da HTML orfani usando `extract_text_and_images_from_html` e `ImageDescriber` (con la correzione per leggere il contenuto del file HTML prima di passarlo al parser).
+            - Aggregare tutto il contenuto testuale estratto dai file orfani associati.
+            - Generare un riassunto unico (`orphan_summary_text`) per tutto il materiale orfano aggregato, utilizzando `summarize_long_text`.
+            - Accumulare i token utilizzati per l'elaborazione degli orfani.
+    4.  **Aggiornamento Formattazione Output**:
+        - La funzione `write_lesson_summary` in `src/resume_generator.py` è stata modificata per accettare `orphan_summary: Optional[str]` e passarlo a `formatter.format_lesson_summary`.
+        - Il metodo `format_lesson_summary` della classe `MarkdownFormatter` (in `src/markdown_formatter.py`) è stato aggiornato per accettare `orphan_summary` e includerlo nel file Markdown finale della lezione sotto una sezione dedicata (es. "Materiale Aggiuntivo da File Orfani").
+    5.  **Correzioni e Refactoring**:
+        - Risolto un `TypeError` in `process_lesson` relativo alla chiamata di `extract_text_and_images_from_html` per i file HTML orfani, assicurando che il contenuto del file venga letto e passato come stringa.
+        - Assicurato il corretto tracciamento Langfuse per l'elaborazione e il riassunto del materiale orfano, incluso l'uso di token per la descrizione delle immagini all'interno dei file HTML orfani.
+- **Test**: L'utente ha verificato il funzionamento attraverso l'esecuzione dello script su un corso d'esempio, confermando che:
+    - I file orfani vengono correttamente identificati e associati alle lezioni VTT precedenti.
+    - Il contenuto dei file orfani (PDF e HTML, incluse descrizioni di immagini da HTML orfani) viene estratto.
+    - Viene generato un riassunto per il materiale orfano aggregato.
+    - Questo riassunto viene correttamente integrato nel file Markdown della lezione genitore.
+    - Il problema con la lettura del contenuto dei file HTML orfani è stato risolto.
+- **Note**: Questa implementazione completa i requisiti principali dello Step 2.5. La logica di associazione garantisce che il materiale non direttamente collegato a una lezione VTT specifica venga comunque elaborato e presentato nel contesto della lezione più pertinente.
