@@ -26,8 +26,10 @@ udemy-course-resumeeer/
 ├── tests/
 │   ├── __init__.py       # Rende 'tests' un package Python
 │   ├── test_api_key_manager.py # Test per APIKeyManager
-│   ├── test_markdown_formatter.py # (Da creare) Test per MarkdownFormatter
-│   └── ...               # Altri file di test
+│   ├── test_markdown_formatter.py # Test per MarkdownFormatter
+│   ├── test_html_parser.py      # Test per HTMLParser
+│   ├── test_image_describer.py  # Test per ImageDescriber
+│   └── ...               # Altri file di test (PDF, VTT, Chunking)
 ├── requirements.txt      # Dipendenze Python del progetto
 ├── README.md             # README principale del progetto
 └── .gitignore            # Specifica i file da ignorare in git
@@ -110,3 +112,16 @@ udemy-course-resumeeer/
 8.  Viene creato un file indice principale per il corso.
 9.  Le metriche complessive del corso (lezioni processate, token totali, tempo totale) vengono registrate in Langfuse.
 10. La sessione (`trace`) Langfuse per il corso viene terminata e i dati inviati.
+
+## Testing e Qualità del Codice
+
+L'approccio ai test unitari e di integrazione si basa sui seguenti principi e strumenti:
+
+*   **Framework**: `unittest` dalla libreria standard Python.
+*   **Directory dei Test**: Tutti i test risiedono nella directory `tests/`.
+*   **Convenzioni**: I file di test seguono il pattern `test_*.py` e le classi di test ereditano da `unittest.TestCase`.
+*   **Mocking**: 
+    *   Per le dipendenze interne, si utilizza `unittest.mock`.
+    *   Per le chiamate API esterne (come OpenAI), si predilige l'uso di `respx` per mockare a livello HTTP. Questo approccio è stato adottato per i test di `ImageDescriber` per garantire maggiore robustezza e isolamento dalle implementazioni interne delle librerie client.
+*   **Copertura del Codice**: `coverage.py` viene utilizzato per monitorare la percentuale di codice coperta dai test. Un file `.coveragerc` è configurato per escludere blocchi non pertinenti (es. `if __name__ == '__main__':`).
+*   **Documentazione dei Test**: I progressi specifici, le decisioni architetturali sui test e le problematiche riscontrate sono documentate in `docs/memory-bank/test-implementation-progress.md`.

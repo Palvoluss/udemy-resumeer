@@ -6,15 +6,12 @@ Questo script verifica che la funzione chunk_text funzioni correttamente con dat
 estratti da file VTT e PDF del corso di esempio.
 """
 import unittest
-import sys
 import os
-import logging
 from pathlib import Path
+import shutil
+import logging
 
-# Aggiunge la directory principale al path per poter importare i moduli
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from resume_generator import chunk_text, extract_text_from_vtt, extract_text_from_pdf
+from src.resume_generator import chunk_text, extract_text_from_vtt, extract_text_from_pdf
 
 class TestRealDataChunking(unittest.TestCase):
     """Classe di test per la funzionalità di chunking con dati reali."""

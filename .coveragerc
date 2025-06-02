@@ -1,0 +1,13 @@
+[run]
+source = src
+
+[report]
+exclude_lines =
+    # Linea standard per escludere i blocchi if __name__ == '__main__':
+    if __name__ == '__main__':
+
+    # Escludere anche pragma: no cover per maggiore flessibilità
+    pragma: no cover
+
+    # Escludere importazioni di moduli di typing che non vengono eseguite
+    if TYPE_CHECKING: 

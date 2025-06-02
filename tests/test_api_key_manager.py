@@ -10,7 +10,7 @@ import os
 import unittest
 import tempfile
 from pathlib import Path
-from api_key_manager import APIKeyManager
+from src.api_key_manager import APIKeyManager
 
 class TestAPIKeyManager(unittest.TestCase):
     """Classe di test per APIKeyManager."""

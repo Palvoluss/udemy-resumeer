@@ -384,3 +384,17 @@
     - La gestione completa dei `data:` URI e l'ottimizzazione per i `file:///` URI (tramite `describe_image_data`) sono TODO in `ImageDescriber`.
     - Il parametro `detail` per la descrizione delle immagini è stato impostato a `high`.
     - Il `max_tokens` per la descrizione delle immagini è stato aumentato a 700.
+
+### Step 24: Implementazione e Miglioramento Unit Test (Fase Iniziale)
+- **Stato**: In Corso (Pausa Attuale)
+- **Data**: 01 Agosto 2024 (data di riferimento per questa fase di test)
+- **Descrizione**:
+    1.  **Introduzione Sistematica dei Test**: Iniziata un'attività dedicata all'implementazione e al miglioramento degli unit test per aumentare la robustezza del codebase.
+    2.  **Correzione Test Esistenti**: Revisionati e corretti i test preesistenti (`test_api_key_manager.py`, `test_pdf_extraction.py`, `test_text_chunking.py`, `test_real_chunking.py`, `test_vtt_extraction.py`) per risolvere problemi di importazione e di asserzione, garantendo la loro corretta esecuzione nella nuova struttura del progetto.
+    3.  **Nuovi Test per Moduli**: Creati nuovi file di test per `src/markdown_formatter.py` e `src/html_parser.py`, raggiungendo una copertura del 100% (esclusi blocchi `if __name__ == '__main__':`) per questi moduli.
+    4.  **Test per `ImageDescriber` e Adozione di `respx`**: Creati test per `src/image_describer.py`. Durante questo processo, è stata adottata la libreria `respx` per mockare le chiamate API OpenAI a livello HTTP. Questa scelta è stata motivata dalla difficoltà e fragilità riscontrate nel mockare direttamente il client OpenAI. `respx` ha permesso di risolvere `AttributeError` e di testare in modo affidabile i casi di successo, errore API e errore di connessione. La copertura di `image_describer.py` ha raggiunto il 93% (esclusi blocchi `if __name__ == '__main__':`).
+    5.  **Configurazione Code Coverage**: Implementato l'uso di `coverage.py` per monitorare la copertura dei test. Creato un file `.coveragerc` per escludere i blocchi `if __name__ == '__main__':` dal report.
+    6.  **Documentazione dei Test**: Creato il file `docs/memory-bank/test-implementation-progress.md` per documentare le strategie di test, le decisioni architetturali, i progressi e i problemi riscontrati.
+    7.  **Aggiornamento Documentazione Architettura**: Il file `docs/memory-bank/architecture.md` è stato aggiornato per includere una sezione dedicata all'approccio ai test e per riflettere l'uso di `respx`.
+- **Test**: Tutti i test unitari esistenti (57 test) passano correttamente (`OK (skipped=3)`).
+- **Note**: La copertura totale del codice sorgente (`src/`) è salita al 25%. Il lavoro sull'aumento della copertura per `src/resume_generator.py` (attualmente al 13%) è stato messo in pausa dopo la creazione della documentazione sui test. La strategia di mocking con `respx` si è dimostrata efficace e dovrebbe essere considerata lo standard per testare future interazioni HTTP.

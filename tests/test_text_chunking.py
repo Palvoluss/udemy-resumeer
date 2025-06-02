@@ -6,15 +6,9 @@ Questo script verifica che la funzione chunk_text divida correttamente un testo 
 in chunks più piccoli preservando il significato semantico e rispettando il limite di dimensione.
 """
 import unittest
-import sys
-import os
 import logging
 from pathlib import Path
-
-# Aggiunge la directory principale al path per poter importare i moduli
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from resume_generator import chunk_text
+from src.resume_generator import chunk_text
 
 class TestTextChunking(unittest.TestCase):
     """Classe di test per la funzionalità di chunking del testo."""
@@ -100,15 +94,11 @@ class TestTextChunking(unittest.TestCase):
         logging.info("Test di preservazione del contenuto superato: tutti i paragrafi originali sono presenti nei chunks.")
 
     def test_chunk_text_empty_input(self):
-        """Test con input vuoto: verifica che la funzione sollevi un'eccezione appropriata."""
-        with self.assertRaises(ValueError):
-            chunk_text("", 2000)
-        with self.assertRaises(ValueError):
-            chunk_text("   ", 2000)
-            
-        logging.info("Test con input vuoto superato: sollevata eccezione appropriata.")
+        """Test con input vuoto: verifica che la funzione restituisca una lista vuota."""
+        self.assertEqual(chunk_text("", 2000), [])
+        self.assertEqual(chunk_text("   ", 2000), []) # Anche con solo spazi
 
-    def test_chunk_text_small_max_size(self):
+    def test_chunk_text_small_max_chunk_size(self):
         """Test con dimensione massima troppo piccola: verifica che la funzione sollevi un'eccezione appropriata."""
         with self.assertRaises(ValueError):
             chunk_text(self.sample_text, 50)

@@ -12,7 +12,7 @@ from pathlib import Path
 import PyPDF2
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-from resume_generator import extract_text_from_pdf, configure_logging
+from src.resume_generator import extract_text_from_pdf, configure_logging
 
 class TestPDFExtraction(unittest.TestCase):
     """Classe per i test della funzionalità di estrazione testo da PDF."""
