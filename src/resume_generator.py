@@ -25,7 +25,6 @@ from .markdown_formatter import MarkdownFormatter # NUOVO IMPORT
 from .prompt_manager import PromptManager # NUOVO IMPORT PER PROMPT_MANAGER
 from .html_parser import extract_text_and_images_from_html # NUOVO IMPORT PER HTML
 from .image_describer import ImageDescriber # NUOVO IMPORT PER IMMAGINI
-import yaml # IMPORT AGGIUNTO
 from datetime import datetime # IMPORT AGGIUNTO
 
 # Configurazione del logger
@@ -794,10 +793,14 @@ def write_lesson_summary(
     if user_score_placeholder:
         frontmatter_data["user_score"] = "" # Placeholder per valutazione manuale
 
-    frontmatter_str = "---\n"
-    for key, value in frontmatter_data.items():
-        frontmatter_str += f"{key}: {yaml.dump(value, default_flow_style=True).strip()}\n"
-    frontmatter_str += "---\n\n"
+    # Utilizza il formatter per creare il frontmatter YAML
+    frontmatter_str = formatter.format_frontmatter(frontmatter_data)
+    # Assicurati che ci sia una riga vuota dopo il frontmatter se format_frontmatter non la include già come desiderato
+    if not frontmatter_str.endswith("\\n\\n"):
+        if frontmatter_str.endswith("\\n"):
+            frontmatter_str += "\\n"
+        else:
+            frontmatter_str += "\\n\\n"
 
     # Utilizza il formatter per creare il contenuto Markdown del corpo della lezione
     lesson_content = formatter.format_lesson_summary(
@@ -926,6 +929,20 @@ def process_lesson(
     """
     lesson_name = vtt_file.stem
     chapter_name = chapter_dir.name # Per Langfuse
+
+    # Determina il percorso di output previsto per il file di riassunto della lezione
+    lesson_output_dir = base_output_dir / chapter_dir.name
+    # Sanitize filename from lesson_name (e.g. vtt_file.stem)
+    safe_lesson_name = re.sub(r'[^\w\-. ]', '_', lesson_name) # Sostituisce caratteri non validi
+    output_file_name = f"{safe_lesson_name}.md"
+    # Questo è il percorso che useremo per controllare e, se necessario, per scrivere
+    output_file_path = lesson_output_dir / output_file_name
+
+    # Verifica se il file di riassunto esiste già
+    if output_file_path.exists():
+        logger.info(f"Il file di riassunto '{output_file_path}' per la lezione '{lesson_name}' esiste già. Salto la generazione.")
+        return output_file_path, 0 # Restituisce il percorso del file esistente e 0 token usati
+    
     total_tokens_lesson = 0
     
     # Tracciamento Langfuse per la lezione - RIMOSSA CHIAMATA A START_LESSON_SPAN
@@ -1110,12 +1127,12 @@ def process_lesson(
 
     # Scrittura del riassunto della lezione
     # Determina il percorso di output del file di riassunto della lezione
-    lesson_output_dir = base_output_dir / chapter_dir.name
-    lesson_output_dir.mkdir(parents=True, exist_ok=True)
+    # lesson_output_dir = base_output_dir / chapter_dir.name # GIÀ CALCOLATO SOPRA
+    # lesson_output_dir.mkdir(parents=True, exist_ok=True) # LA CREAZIONE DELLA DIR È GESTITA DA write_lesson_summary
     # Sanitize filename from lesson_name (e.g. vtt_file.stem)
-    safe_lesson_name = re.sub(r'[^\w\-. ]', '_', lesson_name) # Sostituisce caratteri non validi
-    output_file_name = f"{safe_lesson_name}.md"
-    output_file_path = lesson_output_dir / output_file_name
+    # safe_lesson_name = re.sub(r'[^\w\-. ]', '_', lesson_name) # GIÀ CALCOLATO SOPRA
+    # output_file_name = f"{safe_lesson_name}.md" # GIÀ CALCOLATO SOPRA
+    # output_file_path = lesson_output_dir / output_file_name # GIÀ CALCOLATO SOPRA E USATO PER IL CONTROLLO
 
     try:
         logger.info(f"Scrittura del riassunto della lezione su: {output_file_path}")
@@ -1247,12 +1264,15 @@ def process_chapter(
     if langfuse_tracker:
         # Calcola il tempo di elaborazione del capitolo
         chapter_processing_time = time.time() - start_time_chapter
-        langfuse_tracker.log_chapter_span_metrics(
-            chapter_name=chapter_name,
-            total_lessons_processed=len(vtt_files),
-            total_tokens_used=total_tokens_chapter,
-            processing_time_seconds=chapter_processing_time
-        )
+        chapter_metrics = {
+            "total_lessons_processed": len(vtt_files),
+            "total_tokens_used": total_tokens_chapter,
+            "processing_time_seconds": chapter_processing_time,
+            # chapter_name è già parte dello span, non serve ripeterlo qui
+            # se non specificamente richiesto dalla logica di end_chapter_span.
+            # Dalla definizione di end_chapter_span, non sembra necessario.
+        }
+        langfuse_tracker.end_chapter_span(output=chapter_metrics, status="OK")
 
     logger.info(f"Completata elaborazione del capitolo: {chapter_name}. File di riassunto generati: {len(lesson_summary_files)}")
     return lesson_summary_files, total_tokens_chapter
@@ -1296,6 +1316,8 @@ def create_chapter_summary(formatter: MarkdownFormatter, chapter_dir: Path, less
     # Creazione di un piccolo indice per le lezioni
     if lesson_summary_files:
         content_parts.append(formatter.format_header("Indice delle Lezioni", level=2))
+        content_parts.append(formatter.new_line()) # Assicura una nuova riga dopo l'header dell'indice
+
         for i, lesson_file_path in enumerate(lesson_summary_files):
             if lesson_file_path:
                 lesson_title = lesson_file_path.stem # Nome del file senza estensione
@@ -1305,11 +1327,12 @@ def create_chapter_summary(formatter: MarkdownFormatter, chapter_dir: Path, less
                 # Sostituisce "SUMMARY_" se presente nel nome del file per il display
                 clean_lesson_title_for_display = clean_lesson_title_for_display.replace("SUMMARY_", "").replace("_", " ")
 
-                content_parts.append(formatter.format_list_item(
-                    formatter.format_link(f"Lezione: {clean_lesson_title_for_display}", f"#{clean_lesson_title_for_anchor}"),
-                    ordered=False
-                ))
-        content_parts.append(formatter.new_line())
+                link_text = formatter.format_link(f"Lezione: {clean_lesson_title_for_display}", f"#{clean_lesson_title_for_anchor}")
+                content_parts.append(formatter.format_list_item(link_text, ordered=False))
+                content_parts.append(formatter.new_line()) # Assicura che ogni elemento della lista sia su una nuova riga
+        
+        # La riga seguente non è più necessaria perché ogni elemento della lista ora ha il suo new_line()
+        # content_parts.append(formatter.new_line()) 
         content_parts.append(formatter.horizontal_rule())
         content_parts.append(formatter.new_line())
 
@@ -1344,24 +1367,17 @@ def create_chapter_summary(formatter: MarkdownFormatter, chapter_dir: Path, less
 
                 content_parts.append(f'<a id="{lesson_anchor}"></a>') # Aggiunge l'ancora HTML
                 content_parts.append(formatter.new_line())
-                # Includi il contenuto della lezione (senza il suo frontmatter)
-                # Il titolo H1 della lezione originale diventa un H2 nel file capitolo
-                # Se il contenuto inizia con un H1 (es. # Titolo Lezione), lo trasformiamo in H2
-                if actual_lesson_content_to_embed.startswith("# "):
-                    # Rimuove il primo H1 e lo rimpiazza con un H2 formattato dal formatter
-                    # Questo assume che il titolo H1 nel file lezione sia sulla prima riga
-                    lines = actual_lesson_content_to_embed.split('\n', 1)
-                    # Il titolo della lezione viene preso da lesson_title_from_frontmatter
-                    content_parts.append(formatter.format_header(lesson_title_from_frontmatter, level=2))
-                    content_parts.append(formatter.new_line())
-                    if len(lines) > 1:
-                        content_parts.append(lines[1])
-                else:
-                    # Se non inizia con H1, aggiungiamo comunque un H2 con il titolo e poi il contenuto
-                    content_parts.append(formatter.format_header(lesson_title_from_frontmatter, level=2))
-                    content_parts.append(formatter.new_line())
-                    content_parts.append(actual_lesson_content_to_embed)
+
+                # Aggiungiamo l'header H2 per la lezione, preso dal frontmatter o dal nome del file
+                content_parts.append(formatter.format_header(lesson_title_from_frontmatter, level=2))
+                content_parts.append(formatter.new_line())
+
+                # E poi il contenuto effettivo della lezione (post-frontmatter),
+                # che dovrebbe già contenere le sue intestazioni di sezione (es. "## Riassunto Video (VTT)")
+                # e il corpo del riassunto.
+                content_parts.append(actual_lesson_content_to_embed)
                 
+                # Aggiunge una nuova riga prima della linea orizzontale per separazione
                 content_parts.append(formatter.new_line())
                 content_parts.append(formatter.horizontal_rule())
                 content_parts.append(formatter.new_line())
